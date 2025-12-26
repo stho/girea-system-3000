@@ -1,5 +1,6 @@
 {
   "name": "Girea System 3000",
+  "content_in_root": true,
   "render_readme": true,
   "homeassistant": "2025.7.4"
 }

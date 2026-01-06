@@ -174,8 +174,8 @@ class GiraBLEClient:
                     BleakClient, 
                     device, 
                     self.name,
-                    timeout=10,
-                    max_attempts=3
+                    timeout=60,
+                    max_attempts=5
                 )
                 self._client = client
                 LOGGER.info("Successfully connected to %s (%s) and sending command.", self.name, self.address)

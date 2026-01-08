@@ -49,6 +49,7 @@ class GireaSystem3000Cover(
         CoverEntityFeature.OPEN
         | CoverEntityFeature.CLOSE
         | CoverEntityFeature.STOP
+        | CoverEntityFeature.SET_POSITION
     )
     _attr_assumed_state = False
 
@@ -96,6 +97,14 @@ class GireaSystem3000Cover(
         """Stop the cover."""
         try:
             await self._client.send_stop_command()
+        except UpdateFailed:
+            self._attr_available = False
+            self.async_write_ha_state()
+
+    async def async_set_cover_position(self, **kwargs: Any) -> None:
+        """Set cover position."""
+        try:
+            await self._client.set_absolute_position(kwargs['position'])
         except UpdateFailed:
             self._attr_available = False
             self.async_write_ha_state()

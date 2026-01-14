@@ -99,7 +99,7 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
         position_byte = manufacturer_data[prefix_index + len(BROADCAST_PREFIX)]
         ha_position = round(100 * (255 - position_byte) / 255)
 
-        LOGGER.info(
+        LOGGER.debug(
             "Gira broadcast received from %s. Raw data: %s, Position byte: %s, HA Position: %s%%",
             self._device_name,
             manufacturer_data.hex(),

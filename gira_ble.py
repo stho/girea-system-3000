@@ -176,8 +176,8 @@ class GiraBLEClient:
                     device, 
                     self.name,
                     pair=True,
-                    timeout=60,
-                    max_attempts=5
+                    timeout=5,
+                    max_attempts=3
                 )
                 self._client = client
                 LOGGER.info("Successfully connected to %s (%s) and sending command.", self.name, self.address)

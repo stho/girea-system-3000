@@ -50,3 +50,27 @@ Once you have the MAC address, follow these steps to add it to Home Assistant:
 
 - There is still a little delay between pushing the button in the home assistant ui and actual start
   of the shutter movement.
+
+## About this fork
+
+This project is a fork of [Girea System 3000](https://github.com/clentfort/girea-system-3000),
+originally created by [Christian Lentfort](https://github.com/clentfort).
+
+### Changes in this fork
+
+- General improvements
+- User documentation
+- HACS integration
+- Github Actions integration
+
+Please refer to the original repository for the upstream project and its development history.
+
+## License
+
+This project retains the MIT License of the original project. The original copyright and license
+notices are preserved.
+
+Copyright for original contributions remains with their respective authors. My original
+contributions are Copyright (c) 2026 Stefan Hoppe.
+
+See the [LICENSE](./LICENSE) file for the full license text.

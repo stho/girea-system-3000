@@ -2,19 +2,55 @@
 import logging
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.typing import ConfigType
 
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN, LOGGER, get_device_id
 from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
 
 PLATFORMS = ["cover"]
+
+
+@callback
+def _async_migrate_registry_ids(
+    hass: HomeAssistant, entry: ConfigEntry, address: str
+) -> None:
+    """Migrate IDs from the old entry_id based scheme to the MAC based one.
+
+    Before, the cover's unique_id and the device identifier were the config
+    entry ID, and the device carried a bogus connection. Without this migration
+    existing installations would get a new entity and a new device, losing
+    history, entity_id customizations and area assignments.
+    """
+    device_id = get_device_id(address)
+
+    ent_reg = er.async_get(hass)
+    old_entity_id = ent_reg.async_get_entity_id("cover", DOMAIN, entry.entry_id)
+    if old_entity_id and not ent_reg.async_get_entity_id("cover", DOMAIN, device_id):
+        LOGGER.debug("Migrating unique_id of %s to %s", old_entity_id, device_id)
+        ent_reg.async_update_entity(old_entity_id, new_unique_id=device_id)
+
+    dev_reg = dr.async_get(hass)
+    old_device = dev_reg.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
+    if old_device and not dev_reg.async_get_device(identifiers={(DOMAIN, device_id)}):
+        LOGGER.debug("Migrating device identifiers of %s to %s", old_device.id, device_id)
+        dev_reg.async_update_device(
+            old_device.id,
+            new_identifiers={(DOMAIN, device_id)},
+            new_connections={(dr.CONNECTION_BLUETOOTH, address.upper())},
+        )
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Girea System 3000 from a config entry."""
     address = entry.data["address"]
     name = entry.data.get("name", f"Gira Shutter {address[-5:].replace(':', '')}")
+
+    # Must run before the platforms are set up, so the entity finds its old
+    # registry entry instead of creating a second one.
+    _async_migrate_registry_ids(hass, entry, address)
 
     # Create the coordinator that will listen for broadcasts
     coordinator = GiraPassiveBluetoothDataUpdateCoordinator(

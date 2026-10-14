@@ -10,14 +10,14 @@ from homeassistant.components.cover import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.entity import DeviceInfo
+from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
     UpdateFailed,
 )
 
-from .const import DOMAIN, LOGGER
+from .const import DOMAIN, LOGGER, MANUFACTURER, MODEL, get_device_id
 from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
 
 
@@ -62,11 +62,14 @@ class GireaSystem3000Cover(
         """Initialize the cover."""
         super().__init__(coordinator)
         self._client = client
-        self._attr_unique_id = config_entry.entry_id
+        device_id = get_device_id(client.address)
+        self._attr_unique_id = device_id
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, config_entry.entry_id)},
+            identifiers={(DOMAIN, device_id)},
+            connections={(CONNECTION_BLUETOOTH, client.address.upper())},
             name=client.name,
-            connections={(config_entry.entry_id, client.address)},
+            manufacturer=MANUFACTURER,
+            model=MODEL,
         )
         self._attr_current_cover_position = None  # Initialize the state to None
         LOGGER.debug("Created cover entity for %s", client.name)

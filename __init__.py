@@ -1,11 +1,8 @@
 """The Girea System 3000 (Gira Reverse Engineered) integration."""
-import logging
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
-from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, LOGGER, get_device_id
 from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
@@ -88,8 +85,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Only start the coordinator after all platforms have had a chance to subscribe.
     entry.async_on_unload(coordinator.async_start())
-    # Note: async_start() returns a function that can be awaited, not a coroutine itself.
-    # The async_on_unload() method handles this correctly.
+    # Note: async_start() returns an unsubscribe callback, which async_on_unload()
+    # calls when the entry is unloaded.
 
     return True
 

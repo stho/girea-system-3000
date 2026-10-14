@@ -1,20 +1,18 @@
 """Bluetooth LE communication for Gira System 3000 devices."""
 import asyncio
-import logging
-from typing import Any, cast, Optional
 
-from bleak import BleakClient, BleakError, BLEDevice
+from bleak import BleakClient, BleakError
 from bleak_retry_connector import establish_connection
 
+from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothDataUpdateCoordinator,
 )
-from homeassistant.components import bluetooth
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import UpdateFailed
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 
-from .const import DOMAIN, LOGGER
+from .const import LOGGER
 
 # Define the correct GATT Characteristic UUID.
 GIRA_COMMAND_CHARACTERISTIC_UUID = "97696341-f77a-43ae-8c35-09f0c5245308"
@@ -57,46 +55,48 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
             connectable=False,
         )
         self._device_name = name  # Store name separately since 'name' property is read-only
+        # The base class does not define `data`. Entities read it, so it has to
+        # exist before the first broadcast (or an "unavailable" event) arrives.
+        self.data: dict[str, int] | None = None
         LOGGER.debug("Created coordinator instance for %s (%s)", name, address)
 
+    @callback
     def _async_handle_unavailable(
         self, service_info: BluetoothServiceInfoBleak
     ) -> None:
         """Handle the device going unavailable."""
         LOGGER.debug("Handle unavailable for %s (%s)", self._device_name, self.address)
-        self.last_update_success = False
-        self.async_update_listeners()
+        # The base class marks the device unavailable and notifies the listeners.
+        super()._async_handle_unavailable(service_info)
 
+    @callback
     def _async_handle_bluetooth_event(
         self,
         service_info: BluetoothServiceInfoBleak,
         change: bluetooth.BluetoothChange,
-    ) -> Optional[dict]:
+    ) -> None:
+        """Handle a Bluetooth advertisement of the device."""
         # Check if this event is for our device
         if service_info.device.address.upper() != self.address.upper():
-            return None
+            return
 
         manufacturer_data = service_info.manufacturer_data.get(GIRA_MANUFACTURER_ID)
         if not manufacturer_data:
-            return None
+            return
 
         # Check if the BROADCAST_PREFIX is anywhere within the manufacturer_data
-        try:
-            # Find the starting index of the broadcast prefix
-            prefix_index = manufacturer_data.find(BROADCAST_PREFIX)
-        except (ValueError, AttributeError) as e:
-            return None
+        prefix_index = manufacturer_data.find(BROADCAST_PREFIX)
+        if prefix_index == -1:
+            return
 
         # Ensure we have enough bytes after the prefix to read the position
-        if prefix_index == -1:
-            return None
-            
-        if len(manufacturer_data) < prefix_index + len(BROADCAST_PREFIX) + 1:
+        position_index = prefix_index + len(BROADCAST_PREFIX)
+        if len(manufacturer_data) <= position_index:
             LOGGER.debug("Not enough data after broadcast prefix")
-            return None
+            return
 
         # Extract the position byte, which is 1 byte after the prefix
-        position_byte = manufacturer_data[prefix_index + len(BROADCAST_PREFIX)]
+        position_byte = manufacturer_data[position_index]
         ha_position = round(100 * (255 - position_byte) / 255)
 
         LOGGER.debug(
@@ -106,11 +106,10 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
             position_byte,
             ha_position,
         )
-        
-        # This is the correct way to update the data for a passive coordinator
-        # by returning a dictionary containing the new data.
+
         self.data = {"position": ha_position}
-        self.async_update_listeners()
+        # The base class marks the device available and notifies the listeners.
+        super()._async_handle_bluetooth_event(service_info, change)
 
 
 
@@ -146,6 +145,9 @@ class GiraBLEClient:
         """
         Connect to the device, send a command, and then disconnect.
         This is a single-shot, connect-on-demand method.
+
+        Raises HomeAssistantError if the device cannot be reached, so the
+        failure is shown to the user instead of being swallowed.
         """
         async with self._is_connecting:
             if self._client and self._client.is_connected:
@@ -161,19 +163,21 @@ class GiraBLEClient:
                     # Fall through to attempt a reconnect
                     await self._client.disconnect()
                     self._client = None
-            
+
             LOGGER.debug("Attempting to connect to %s (%s) to send command.", self.name, self.address)
-            
+
             device = bluetooth.async_ble_device_from_address(self.hass, self.address)
             if not device:
-                LOGGER.error("Device %s (%s) not found in Home Assistant's Bluetooth devices.", self.name, self.address)
-                raise UpdateFailed(f"Device {self.name} not found.")
+                raise HomeAssistantError(
+                    f"Gira device {self.name} ({self.address}) is currently not seen by "
+                    "any Bluetooth adapter or proxy. Check the range and the power supply."
+                )
 
             client = None
             try:
                 client = await establish_connection(
-                    BleakClient, 
-                    device, 
+                    BleakClient,
+                    device,
                     self.name,
                     pair=True,
                     timeout=5,
@@ -190,12 +194,18 @@ class GiraBLEClient:
 
                 LOGGER.info("Command sent successfully to %s.", self.name)
             except (BleakError, asyncio.TimeoutError) as e:
-                LOGGER.error("Failed to connect or send command to %s (%s): %s", self.name, self.address, e)
-                raise UpdateFailed(f"Failed to connect and send command to {self.name}: {e}") from e
+                raise HomeAssistantError(
+                    f"Failed to connect to {self.name} ({self.address}) or send the command: {e}"
+                ) from e
             finally:
                 if client and client.is_connected:
                     LOGGER.info("Disconnecting from %s (%s) after sending command.", self.name, self.address)
-                    await client.disconnect()
+                    try:
+                        await client.disconnect()
+                    except (BleakError, asyncio.TimeoutError) as e:
+                        # The command was already handled, so a failing disconnect
+                        # must not turn it into an error (or hide the real one).
+                        LOGGER.debug("Disconnect from %s failed: %s", self.name, e)
                 self._client = None
 
     async def send_up_command(self) -> None:

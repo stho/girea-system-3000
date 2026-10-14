@@ -1,7 +1,6 @@
 """Platform for the Girea System 3000 cover integration."""
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from homeassistant.components.cover import (
@@ -12,10 +11,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import (
-    CoordinatorEntity,
-    UpdateFailed,
-)
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, LOGGER, MANUFACTURER, MODEL, get_device_id
 from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
@@ -32,7 +28,7 @@ async def async_setup_entry(
     client: GiraBLEClient = data["client"]
 
     # Add the Gira shutter as a Home Assistant Cover entity
-    cover_entity = GireaSystem3000Cover(coordinator, client, config_entry)
+    cover_entity = GireaSystem3000Cover(coordinator, client)
     async_add_entities([cover_entity])
     
     LOGGER.debug("Coordinator setup complete for %s", config_entry.title)
@@ -57,7 +53,6 @@ class GireaSystem3000Cover(
         self,
         coordinator: GiraPassiveBluetoothDataUpdateCoordinator,
         client: GiraBLEClient,
-        config_entry: ConfigEntry,
     ) -> None:
         """Initialize the cover."""
         super().__init__(coordinator)
@@ -77,40 +72,26 @@ class GireaSystem3000Cover(
     @property
     def available(self) -> bool:
         """Return if the entity is available."""
-        # A passive bluetooth device is always available as long as it's running
+        # Availability is deliberately not derived from received broadcasts.
+        # If the device cannot be reached, the commands raise an error that is
+        # shown to the user.
         return True
 
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
-        try:
-            await self._client.send_up_command()
-        except UpdateFailed:
-            self._attr_available = False
-            self.async_write_ha_state()
+        await self._client.send_up_command()
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover."""
-        try:
-            await self._client.send_down_command()
-        except UpdateFailed:
-            self._attr_available = False
-            self.async_write_ha_state()
+        await self._client.send_down_command()
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
-        try:
-            await self._client.send_stop_command()
-        except UpdateFailed:
-            self._attr_available = False
-            self.async_write_ha_state()
+        await self._client.send_stop_command()
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Set cover position."""
-        try:
-            await self._client.set_absolute_position(kwargs['position'])
-        except UpdateFailed:
-            self._attr_available = False
-            self.async_write_ha_state()
+        await self._client.set_absolute_position(kwargs['position'])
 
     @property
     def current_cover_position(self) -> int | None:

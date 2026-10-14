@@ -9,13 +9,12 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.device_registry import format_mac
 from bleak import BleakClient, BleakError
 
 from .const import DOMAIN
-from .gira_ble import GiraBLEClient
 
 _LOGGER = logging.getLogger(__name__)
 

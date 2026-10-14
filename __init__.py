@@ -13,6 +13,20 @@ from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
 PLATFORMS = ["cover"]
 
 
+def _async_get_entry_device(
+    dev_reg: dr.DeviceRegistry, entry: ConfigEntry, identifier: tuple[str, str]
+) -> dr.DeviceEntry | None:
+    """Return this config entry's device with the given identifier, if any.
+
+    Device identifiers are no longer unique across config entries, so the
+    lookup has to be scoped to the config entry. Older Home Assistant versions
+    do not have the scoped lookup yet and fall back to the old method.
+    """
+    if hasattr(dev_reg, "async_get_device_by_identifier"):
+        return dev_reg.async_get_device_by_identifier(identifier, entry.entry_id)
+    return dev_reg.async_get_device(identifiers={identifier})
+
+
 @callback
 def _async_migrate_registry_ids(
     hass: HomeAssistant, entry: ConfigEntry, address: str
@@ -33,8 +47,8 @@ def _async_migrate_registry_ids(
         ent_reg.async_update_entity(old_entity_id, new_unique_id=device_id)
 
     dev_reg = dr.async_get(hass)
-    old_device = dev_reg.async_get_device(identifiers={(DOMAIN, entry.entry_id)})
-    if old_device and not dev_reg.async_get_device(identifiers={(DOMAIN, device_id)}):
+    old_device = _async_get_entry_device(dev_reg, entry, (DOMAIN, entry.entry_id))
+    if old_device and not _async_get_entry_device(dev_reg, entry, (DOMAIN, device_id)):
         LOGGER.debug("Migrating device identifiers of %s to %s", old_device.id, device_id)
         dev_reg.async_update_device(
             old_device.id,

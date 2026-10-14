@@ -1,0 +1,27 @@
+name: HACS Validation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  schedule:
+    - cron: "0 0 * * *" # Läuft einmal täglich, um Kompatibilität mit HACS-Änderungen zu prüfen
+
+jobs:
+  validate:
+    name: Run Validations
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1. Hassfest-Validierung (Speziell für Home Assistant Integrationen)
+      - name: Hassfest validation
+        uses: home-assistant/actions/hassfest@master
+
+      # 2. HACS-eigene Validierung
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration # Definiert den Typ als Integration

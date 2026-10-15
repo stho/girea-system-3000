@@ -47,7 +47,12 @@ class GireaSystem3000Cover(
         | CoverEntityFeature.STOP
         | CoverEntityFeature.SET_POSITION
     )
-    _attr_assumed_state = False
+    # The position only arrives with a delay, after the shutter was moved. Until
+    # then Home Assistant still shows the old end position, and the frontend
+    # disables the button for the opposite direction (e.g. "close" while the
+    # position still says 0 %), although the shutter is already moving. An assumed
+    # state keeps both buttons usable at any time.
+    _attr_assumed_state = True
 
     def __init__(
         self,

@@ -17,6 +17,14 @@ from .const import LOGGER
 # Define the correct GATT Characteristic UUID.
 GIRA_COMMAND_CHARACTERISTIC_UUID = "97696341-f77a-43ae-8c35-09f0c5245308"
 
+# establish_connection() has no overall time limit: every attempt may take up
+# to 20 s (not configurable), plus a pause between attempts. With an
+# unreachable device or Bluetooth proxy a command can therefore hang for a
+# minute or more before the error appears. These values limit that.
+MAX_CONNECT_ATTEMPTS = 2
+COMMAND_TIMEOUT = 20  # seconds for connecting and sending one command
+DISCONNECT_TIMEOUT = 5  # seconds
+
 # --- Constants for Gira Command Generation ---
 # Basic command structure prefix
 COMMAND_PREFIX = bytearray.fromhex("F6032001")
@@ -175,25 +183,30 @@ class GiraBLEClient:
 
             client = None
             try:
-                client = await establish_connection(
-                    BleakClient,
-                    device,
-                    self.name,
-                    pair=True,
-                    timeout=5,
-                    max_attempts=3
-                )
-                self._client = client
-                LOGGER.info("Successfully connected to %s (%s) and sending command.", self.name, self.address)
+                async with asyncio.timeout(COMMAND_TIMEOUT):
+                    client = await establish_connection(
+                        BleakClient,
+                        device,
+                        self.name,
+                        pair=True,
+                        max_attempts=MAX_CONNECT_ATTEMPTS,
+                    )
+                    self._client = client
+                    LOGGER.info("Successfully connected to %s (%s) and sending command.", self.name, self.address)
 
-                # Log the command before sending it
-                LOGGER.debug("Sending command: %s", command.hex())
+                    # Log the command before sending it
+                    LOGGER.debug("Sending command: %s", command.hex())
 
-                # Send the command, reponse=True is crucial
-                await client.write_gatt_char(GIRA_COMMAND_CHARACTERISTIC_UUID, command, response=True)
+                    # Send the command, reponse=True is crucial
+                    await client.write_gatt_char(GIRA_COMMAND_CHARACTERISTIC_UUID, command, response=True)
 
                 LOGGER.info("Command sent successfully to %s.", self.name)
-            except (BleakError, asyncio.TimeoutError) as e:
+            except TimeoutError as e:
+                raise HomeAssistantError(
+                    f"Timed out after {COMMAND_TIMEOUT} s while communicating with {self.name} "
+                    f"({self.address}). Check that the Bluetooth adapter or proxy is online and in range."
+                ) from e
+            except BleakError as e:
                 raise HomeAssistantError(
                     f"Failed to connect to {self.name} ({self.address}) or send the command: {e}"
                 ) from e
@@ -201,8 +214,9 @@ class GiraBLEClient:
                 if client and client.is_connected:
                     LOGGER.info("Disconnecting from %s (%s) after sending command.", self.name, self.address)
                     try:
-                        await client.disconnect()
-                    except (BleakError, asyncio.TimeoutError) as e:
+                        async with asyncio.timeout(DISCONNECT_TIMEOUT):
+                            await client.disconnect()
+                    except (BleakError, TimeoutError) as e:
                         # The command was already handled, so a failing disconnect
                         # must not turn it into an error (or hide the real one).
                         LOGGER.debug("Disconnect from %s failed: %s", self.name, e)

@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Add Gira shutter controller",
-        "description": "Enter the Bluetooth MAC address of your Gira \"Jal+Schaltuhr\" and choose a name. The device must be in pairing mode and within range of your Bluetooth adapter or proxy.",
+        "description": "Enter the Bluetooth MAC address of your Gira \"Jal+Schaltuhr\" and choose a name. The device must be in pairing mode and within range of your Bluetooth adapter or proxy. It is connected and paired once to check that it can be reached.",
         "data": {
           "address": "Bluetooth MAC address",
           "name": "Name"
@@ -16,19 +16,19 @@
       },
       "name": {
         "title": "Set up Gira shutter controller",
-        "description": "A Gira shutter controller was discovered. Put it into pairing mode, then confirm the address and choose a name.",
+        "description": "A Gira shutter controller was discovered. Put it into pairing mode, choose a name and submit. The device is connected and paired once to check that it can be reached.",
         "data": {
-          "address": "Bluetooth MAC address",
           "name": "Name"
         },
         "data_description": {
-          "address": "The MAC address of the discovered device. Only change this if you know what you are doing.",
           "name": "The name of the device in Home Assistant."
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to connect to the device. Make sure it is in pairing mode and within range of your Bluetooth adapter or proxy.",
+      "device_not_found": "The device is not seen by any Bluetooth adapter or proxy. Check the address, the power supply and the range.",
+      "invalid_address": "This is not a valid MAC address. Use the format AA:BB:CC:DD:EE:FF.",
       "unknown": "Unexpected error"
     },
     "abort": {

@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Gira-Rollladensteuerung hinzufügen",
-        "description": "Gib die Bluetooth-MAC-Adresse deiner Gira „Jal+Schaltuhr“ ein und wähle einen Namen. Das Gerät muss sich im Pairing-Modus und in Reichweite deines Bluetooth-Adapters oder -Proxys befinden.",
+        "description": "Gib die Bluetooth-MAC-Adresse deiner Gira „Jal+Schaltuhr“ ein und wähle einen Namen. Das Gerät muss sich im Pairing-Modus und in Reichweite deines Bluetooth-Adapters oder -Proxys befinden. Es wird einmal verbunden und gepairt, um zu prüfen, ob es erreichbar ist.",
         "data": {
           "address": "Bluetooth-MAC-Adresse",
           "name": "Name"
@@ -16,19 +16,19 @@
       },
       "name": {
         "title": "Gira-Rollladensteuerung einrichten",
-        "description": "Eine Gira-Rollladensteuerung wurde gefunden. Versetze sie in den Pairing-Modus, bestätige dann die Adresse und wähle einen Namen.",
+        "description": "Eine Gira-Rollladensteuerung wurde gefunden. Versetze sie in den Pairing-Modus, wähle einen Namen und sende das Formular ab. Das Gerät wird einmal verbunden und gepairt, um zu prüfen, ob es erreichbar ist.",
         "data": {
-          "address": "Bluetooth-MAC-Adresse",
           "name": "Name"
         },
         "data_description": {
-          "address": "Die MAC-Adresse des gefundenen Geräts. Ändere sie nur, wenn du genau weißt, was du tust.",
           "name": "Der Name des Geräts in Home Assistant."
         }
       }
     },
     "error": {
       "cannot_connect": "Verbindung zum Gerät fehlgeschlagen. Stelle sicher, dass es sich im Pairing-Modus und in Reichweite deines Bluetooth-Adapters oder -Proxys befindet.",
+      "device_not_found": "Das Gerät wird von keinem Bluetooth-Adapter oder -Proxy gesehen. Prüfe die Adresse, die Stromversorgung und die Reichweite.",
+      "invalid_address": "Das ist keine gültige MAC-Adresse. Verwende das Format AA:BB:CC:DD:EE:FF.",
       "unknown": "Unerwarteter Fehler"
     },
     "abort": {

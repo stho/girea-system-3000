@@ -211,16 +211,59 @@ class GiraBLEClient:
                     f"Failed to connect to {self.name} ({self.address}) or send the command: {e}"
                 ) from e
             finally:
-                if client and client.is_connected:
-                    LOGGER.info("Disconnecting from %s (%s) after sending command.", self.name, self.address)
-                    try:
-                        async with asyncio.timeout(DISCONNECT_TIMEOUT):
-                            await client.disconnect()
-                    except (BleakError, TimeoutError) as e:
-                        # The command was already handled, so a failing disconnect
-                        # must not turn it into an error (or hide the real one).
-                        LOGGER.debug("Disconnect from %s failed: %s", self.name, e)
+                await self._async_disconnect(client)
                 self._client = None
+
+    async def async_verify_connection(self) -> None:
+        """Connect (and pair) once without sending a command, then disconnect.
+
+        Used by the config flow, so that a wrong address or a device that is not
+        in pairing mode is reported while the device is being added, instead of
+        at the first button press. Raises HomeAssistantError on failure.
+        """
+        device = bluetooth.async_ble_device_from_address(self.hass, self.address)
+        if not device:
+            raise HomeAssistantError(
+                f"Gira device {self.name} ({self.address}) is currently not seen by "
+                "any Bluetooth adapter or proxy. Check the range and the power supply."
+            )
+
+        async with self._is_connecting:
+            client = None
+            try:
+                async with asyncio.timeout(COMMAND_TIMEOUT):
+                    client = await establish_connection(
+                        BleakClient,
+                        device,
+                        self.name,
+                        pair=True,
+                        max_attempts=MAX_CONNECT_ATTEMPTS,
+                    )
+                LOGGER.debug("Connection test to %s (%s) succeeded.", self.name, self.address)
+            except TimeoutError as e:
+                raise HomeAssistantError(
+                    f"Timed out after {COMMAND_TIMEOUT} s while connecting to {self.name} ({self.address})."
+                ) from e
+            except BleakError as e:
+                raise HomeAssistantError(
+                    f"Failed to connect to {self.name} ({self.address}): {e}"
+                ) from e
+            finally:
+                await self._async_disconnect(client)
+
+    async def _async_disconnect(self, client: BleakClient | None) -> None:
+        """Disconnect after use. A failing disconnect is logged, never raised.
+
+        The operation was already handled at this point, so a failing
+        disconnect must not turn it into an error (or hide the real one).
+        """
+        if client and client.is_connected:
+            LOGGER.info("Disconnecting from %s (%s).", self.name, self.address)
+            try:
+                async with asyncio.timeout(DISCONNECT_TIMEOUT):
+                    await client.disconnect()
+            except (BleakError, TimeoutError) as e:
+                LOGGER.debug("Disconnect from %s failed: %s", self.name, e)
 
     async def send_up_command(self) -> None:
         """Send the command to raise the shutter."""

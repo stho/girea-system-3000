@@ -1,5 +1,6 @@
 """Bluetooth LE communication for Gira System 3000 devices."""
 import asyncio
+import time
 
 from bleak import BleakClient, BleakError
 from bleak_retry_connector import establish_connection
@@ -9,8 +10,9 @@ from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothDataUpdateCoordinator,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_call_later
 
 from .const import DOMAIN, LOGGER
 
@@ -24,6 +26,16 @@ GIRA_COMMAND_CHARACTERISTIC_UUID = "97696341-f77a-43ae-8c35-09f0c5245308"
 MAX_CONNECT_ATTEMPTS = 2
 COMMAND_TIMEOUT = 20  # seconds for connecting and sending one command
 DISCONNECT_TIMEOUT = 5  # seconds
+
+# After a command the connection is kept open for a short time, so that follow-up
+# commands (e.g. "stop" after "open", or a slider that is moved several times) do
+# not have to connect again. 0 switches the reuse off: every command then connects,
+# sends and disconnects again.
+# Keep this short: while the connection is open, the device may not send position
+# broadcasts and other Bluetooth clients (e.g. the Gira app) may not be able to
+# connect, and a Bluetooth proxy only has a few connection slots.
+IDLE_DISCONNECT_DELAY = 10  # seconds
+WRITE_TIMEOUT = 5  # seconds for a command on an already open connection
 
 # --- Constants for Gira Command Generation ---
 # Basic command structure prefix
@@ -153,7 +165,11 @@ def generate_position_command(percentage: int) -> bytearray:
 
 
 class GiraBLEClient:
-    """Manages the Bluetooth LE connection and command sending for a Gira device."""
+    """Manages the Bluetooth LE connection and command sending for a Gira device.
+
+    A connection is made on demand and kept open for IDLE_DISCONNECT_DELAY seconds
+    after the last command, so that follow-up commands are sent faster.
+    """
 
     def __init__(self, hass: HomeAssistant, address: str, name: str) -> None:
         """Initialize the client."""
@@ -161,71 +177,156 @@ class GiraBLEClient:
         self.address = address
         self.name = name
         self._client: BleakClient | None = None
-        self._is_connecting = asyncio.Lock()
+        self._lock = asyncio.Lock()
+        self._idle_timer: CALLBACK_TYPE | None = None
+        self._last_used = 0.0
 
     async def send_command(self, command: bytearray) -> None:
-        """
-        Connect to the device, send a command, and then disconnect.
-        This is a single-shot, connect-on-demand method.
+        """Send a command, using the open connection if there is one.
 
         Raises HomeAssistantError if the device cannot be reached, so the
         failure is shown to the user instead of being swallowed.
         """
-        async with self._is_connecting:
-            if self._client and self._client.is_connected:
-                LOGGER.debug("Client already connected, sending command directly.")
-                try:
-                    # Log the command before sending it
-                    LOGGER.debug("Sending command: %s", command.hex())
-                    # Changed response to False
-                    await self._client.write_gatt_char(GIRA_COMMAND_CHARACTERISTIC_UUID, command, response=False)
-                    return
-                except (BleakError, asyncio.TimeoutError) as e:
-                    LOGGER.warning("Failed to send command to connected device: %s", e)
-                    # Fall through to attempt a reconnect
-                    await self._client.disconnect()
-                    self._client = None
-
-            LOGGER.debug("Attempting to connect to %s (%s) to send command.", self.name, self.address)
-
-            device = bluetooth.async_ble_device_from_address(self.hass, self.address)
-            if not device:
-                raise _error("device_not_found", name=self.name, address=self.address)
-
-            client = None
+        async with self._lock:
+            self._cancel_idle_timer()
             try:
-                async with asyncio.timeout(COMMAND_TIMEOUT):
-                    client = await establish_connection(
-                        BleakClient,
-                        device,
-                        self.name,
-                        pair=True,
-                        max_attempts=MAX_CONNECT_ATTEMPTS,
-                    )
-                    self._client = client
-                    LOGGER.info("Successfully connected to %s (%s) and sending command.", self.name, self.address)
-
-                    # Log the command before sending it
-                    LOGGER.debug("Sending command: %s", command.hex())
-
-                    # Send the command, reponse=True is crucial
-                    await client.write_gatt_char(GIRA_COMMAND_CHARACTERISTIC_UUID, command, response=True)
-
-                LOGGER.info("Command sent successfully to %s.", self.name)
-            except TimeoutError as e:
-                raise _error(
-                    "command_timeout",
-                    name=self.name,
-                    address=self.address,
-                    timeout=COMMAND_TIMEOUT,
-                ) from e
-            except BleakError as e:
-                raise _error(
-                    "command_failed", name=self.name, address=self.address, error=e
-                ) from e
+                if not await self._async_write_open_connection(command):
+                    await self._async_connect_and_write(command)
             finally:
+                self._last_used = time.monotonic()
+                if self._client is not None:
+                    self._schedule_idle_disconnect()
+
+    async def _async_write_open_connection(self, command: bytearray) -> bool:
+        """Try to send the command over the open connection.
+
+        Returns True if the command was sent. Returns False if there is no usable
+        connection (the caller then connects again). A connection that went stale
+        is dropped. Note that a write whose confirmation got lost is sent again
+        over the new connection; the commands of the cover can safely be repeated.
+        """
+        client = self._client
+        if client is None:
+            return False
+        if not client.is_connected:
+            await self._async_drop_connection()
+            return False
+
+        try:
+            started = time.monotonic()
+            async with asyncio.timeout(WRITE_TIMEOUT):
+                await self._async_write(client, command)
+        except (BleakError, TimeoutError) as e:
+            LOGGER.debug(
+                "The open connection to %s did not work (%s), connecting again.", self.name, e
+            )
+            await self._async_drop_connection()
+            return False
+
+        LOGGER.debug(
+            "Command sent over the open connection to %s in %.2f s.",
+            self.name,
+            time.monotonic() - started,
+        )
+        return True
+
+    async def _async_connect_and_write(self, command: bytearray) -> None:
+        """Connect to the device and send the command.
+
+        The connection is kept open afterwards if the reuse is switched on.
+        """
+        device = bluetooth.async_ble_device_from_address(self.hass, self.address)
+        if not device:
+            raise _error("device_not_found", name=self.name, address=self.address)
+
+        LOGGER.debug("Connecting to %s (%s) to send a command.", self.name, self.address)
+
+        client = None
+        keep_open = False
+        try:
+            async with asyncio.timeout(COMMAND_TIMEOUT):
+                started = time.monotonic()
+                client = await establish_connection(
+                    BleakClient,
+                    device,
+                    self.name,
+                    disconnected_callback=self._on_disconnected,
+                    pair=True,
+                    max_attempts=MAX_CONNECT_ATTEMPTS,
+                )
+                connected = time.monotonic()
+                await self._async_write(client, command)
+            LOGGER.debug(
+                "Command sent to %s: connecting took %.2f s, writing %.2f s.",
+                self.name,
+                connected - started,
+                time.monotonic() - connected,
+            )
+            keep_open = IDLE_DISCONNECT_DELAY > 0
+        except TimeoutError as e:
+            raise _error(
+                "command_timeout",
+                name=self.name,
+                address=self.address,
+                timeout=COMMAND_TIMEOUT,
+            ) from e
+        except BleakError as e:
+            raise _error(
+                "command_failed", name=self.name, address=self.address, error=e
+            ) from e
+        finally:
+            if keep_open:
+                self._client = client
+            else:
                 await self._async_disconnect(client)
-                self._client = None
+
+    async def _async_write(self, client: BleakClient, command: bytearray) -> None:
+        """Write the command and wait until the device confirmed it."""
+        LOGGER.debug("Sending command: %s", command.hex())
+        # response=True is crucial: the command is only done when the device confirmed it
+        await client.write_gatt_char(GIRA_COMMAND_CHARACTERISTIC_UUID, command, response=True)
+
+    def _on_disconnected(self, client: BleakClient) -> None:
+        """Forget the connection when the device or the adapter closed it."""
+        if self._client is client:
+            LOGGER.debug("The connection to %s was closed.", self.name)
+            self._client = None
+
+    def _schedule_idle_disconnect(self) -> None:
+        """Close the connection after IDLE_DISCONNECT_DELAY seconds without a command."""
+        self._cancel_idle_timer()
+        self._idle_timer = async_call_later(
+            self.hass, IDLE_DISCONNECT_DELAY, self._async_idle_disconnect
+        )
+
+    def _cancel_idle_timer(self) -> None:
+        """Cancel the pending idle disconnect, if any."""
+        if self._idle_timer is not None:
+            self._idle_timer()
+            self._idle_timer = None
+
+    async def _async_idle_disconnect(self, _now: object) -> None:
+        """Close the connection that was not used for a while."""
+        self._idle_timer = None
+        async with self._lock:
+            # A command that ran while this waited for the lock has scheduled its
+            # own timer. The margin keeps the timer from skipping its own job
+            # because of clock rounding, which would leave the connection open.
+            if time.monotonic() - self._last_used < IDLE_DISCONNECT_DELAY - 1:
+                return
+            LOGGER.debug("Closing the idle connection to %s.", self.name)
+            await self._async_drop_connection()
+
+    async def _async_drop_connection(self) -> None:
+        """Disconnect and forget the open connection."""
+        client, self._client = self._client, None
+        await self._async_disconnect(client)
+
+    async def async_shutdown(self) -> None:
+        """Close the connection, e.g. when the config entry is unloaded."""
+        self._cancel_idle_timer()
+        async with self._lock:
+            await self._async_drop_connection()
 
     async def async_verify_connection(self) -> None:
         """Connect (and pair) once without sending a command, then disconnect.
@@ -238,7 +339,7 @@ class GiraBLEClient:
         if not device:
             raise _error("device_not_found", name=self.name, address=self.address)
 
-        async with self._is_connecting:
+        async with self._lock:
             client = None
             try:
                 async with asyncio.timeout(COMMAND_TIMEOUT):
@@ -271,7 +372,7 @@ class GiraBLEClient:
         disconnect must not turn it into an error (or hide the real one).
         """
         if client and client.is_connected:
-            LOGGER.info("Disconnecting from %s (%s).", self.name, self.address)
+            LOGGER.debug("Disconnecting from %s (%s).", self.name, self.address)
             try:
                 async with asyncio.timeout(DISCONNECT_TIMEOUT):
                     await client.disconnect()

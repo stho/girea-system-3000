@@ -35,5 +35,19 @@
       "already_configured": "Dieses Gerät ist bereits eingerichtet.",
       "already_in_progress": "Die Einrichtung für dieses Gerät läuft bereits."
     }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "{name} ({address}) wird aktuell von keinem Bluetooth-Adapter oder -Proxy gesehen. Prüfe die Reichweite und die Stromversorgung."
+    },
+    "command_timeout": {
+      "message": "Zeitüberschreitung nach {timeout} s bei der Kommunikation mit {name} ({address}). Prüfe, ob der Bluetooth-Adapter oder -Proxy online und in Reichweite ist."
+    },
+    "command_failed": {
+      "message": "Verbindung zu {name} ({address}) oder Senden des Befehls fehlgeschlagen: {error}"
+    },
+    "connect_failed": {
+      "message": "Verbindung zu {name} ({address}) fehlgeschlagen: {error}"
+    }
   }
 }

@@ -35,5 +35,19 @@
       "already_configured": "This device is already configured.",
       "already_in_progress": "A setup for this device is already in progress."
     }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "{name} ({address}) is currently not seen by any Bluetooth adapter or proxy. Check the range and the power supply."
+    },
+    "command_timeout": {
+      "message": "Timed out after {timeout} s while communicating with {name} ({address}). Check that the Bluetooth adapter or proxy is online and in range."
+    },
+    "command_failed": {
+      "message": "Failed to connect to {name} ({address}) or send the command: {error}"
+    },
+    "connect_failed": {
+      "message": "Failed to connect to {name} ({address}): {error}"
+    }
   }
 }

@@ -12,7 +12,7 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 
-from .const import LOGGER
+from .const import DOMAIN, LOGGER
 
 # Define the correct GATT Characteristic UUID.
 GIRA_COMMAND_CHARACTERISTIC_UUID = "97696341-f77a-43ae-8c35-09f0c5245308"
@@ -48,6 +48,20 @@ VALUE_STOP = 0x00 # Stop command uses 0x00 as its value
 GIRA_MANUFACTURER_ID = 1412
 # The correct, full prefix for a position broadcast
 BROADCAST_PREFIX = bytearray.fromhex("F7032001F61001")
+
+
+def _error(key: str, **placeholders: object) -> HomeAssistantError:
+    """Return a HomeAssistantError whose text is translated by Home Assistant.
+
+    The texts are in translations/<lang>.json under "exceptions". Without a
+    translation key the message would always be English, even though Home
+    Assistant adds its own text in the user's language around it.
+    """
+    return HomeAssistantError(
+        translation_domain=DOMAIN,
+        translation_key=key,
+        translation_placeholders={k: str(v) for k, v in placeholders.items()},
+    )
 
 
 class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordinator):
@@ -176,10 +190,7 @@ class GiraBLEClient:
 
             device = bluetooth.async_ble_device_from_address(self.hass, self.address)
             if not device:
-                raise HomeAssistantError(
-                    f"Gira device {self.name} ({self.address}) is currently not seen by "
-                    "any Bluetooth adapter or proxy. Check the range and the power supply."
-                )
+                raise _error("device_not_found", name=self.name, address=self.address)
 
             client = None
             try:
@@ -202,13 +213,15 @@ class GiraBLEClient:
 
                 LOGGER.info("Command sent successfully to %s.", self.name)
             except TimeoutError as e:
-                raise HomeAssistantError(
-                    f"Timed out after {COMMAND_TIMEOUT} s while communicating with {self.name} "
-                    f"({self.address}). Check that the Bluetooth adapter or proxy is online and in range."
+                raise _error(
+                    "command_timeout",
+                    name=self.name,
+                    address=self.address,
+                    timeout=COMMAND_TIMEOUT,
                 ) from e
             except BleakError as e:
-                raise HomeAssistantError(
-                    f"Failed to connect to {self.name} ({self.address}) or send the command: {e}"
+                raise _error(
+                    "command_failed", name=self.name, address=self.address, error=e
                 ) from e
             finally:
                 await self._async_disconnect(client)
@@ -223,10 +236,7 @@ class GiraBLEClient:
         """
         device = bluetooth.async_ble_device_from_address(self.hass, self.address)
         if not device:
-            raise HomeAssistantError(
-                f"Gira device {self.name} ({self.address}) is currently not seen by "
-                "any Bluetooth adapter or proxy. Check the range and the power supply."
-            )
+            raise _error("device_not_found", name=self.name, address=self.address)
 
         async with self._is_connecting:
             client = None
@@ -241,12 +251,15 @@ class GiraBLEClient:
                     )
                 LOGGER.debug("Connection test to %s (%s) succeeded.", self.name, self.address)
             except TimeoutError as e:
-                raise HomeAssistantError(
-                    f"Timed out after {COMMAND_TIMEOUT} s while connecting to {self.name} ({self.address})."
+                raise _error(
+                    "command_timeout",
+                    name=self.name,
+                    address=self.address,
+                    timeout=COMMAND_TIMEOUT,
                 ) from e
             except BleakError as e:
-                raise HomeAssistantError(
-                    f"Failed to connect to {self.name} ({self.address}): {e}"
+                raise _error(
+                    "connect_failed", name=self.name, address=self.address, error=e
                 ) from e
             finally:
                 await self._async_disconnect(client)

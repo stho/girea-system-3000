@@ -92,6 +92,7 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
         # The base class does not define `data`. Entities read it, so it has to
         # exist before the first broadcast (or an "unavailable" event) arrives.
         self.data: dict[str, int] | None = None
+        self._last_advertisement: tuple[dict[int, str], dict[str, str]] | None = None
         LOGGER.debug("Created coordinator instance for %s (%s)", name, address)
 
     @callback
@@ -113,6 +114,25 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
         # Check if this event is for our device
         if service_info.device.address.upper() != self.address.upper():
             return
+
+        # Log every change in the advertisements of the device, also the ones that
+        # are not parsed below. This shows what the device sends while it moves (and
+        # when), e.g. whether there is a movement status besides the position. The
+        # callback is also called for repeated identical advertisements, so only
+        # changes are logged to keep the log readable.
+        advertisement = (
+            {k: v.hex() for k, v in service_info.manufacturer_data.items()},
+            {k: v.hex() for k, v in service_info.service_data.items()},
+        )
+        if advertisement != self._last_advertisement:
+            self._last_advertisement = advertisement
+            LOGGER.debug(
+                "Advertisement changed for %s via %s (RSSI %s): manufacturer_data=%s service_data=%s",
+                self._device_name,
+                service_info.source,
+                service_info.rssi,
+                *advertisement,
+            )
 
         manufacturer_data = service_info.manufacturer_data.get(GIRA_MANUFACTURER_ID)
         if not manufacturer_data:

@@ -101,4 +101,4 @@ While this documentation focuses on shutters (ObjectID 800), the protocol struct
 | **Op Mode Detection** | Yes (PID 162) | **No** | Manual |
 
 ### Implementation Recommendation
-To improve the integration, the `GiraPassiveBluetoothDataUpdateCoordinator` should be updated to listen for PIDs `0xF5` (Slat position) and `0xF7` (Movement status) in addition to the current `0xF6` (Blind position).
+To improve the integration, the `GiraPassiveBluetoothDataUpdateCoordinator` should be updated to listen for PIDs `0xF5` (Slat position).

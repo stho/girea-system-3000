@@ -96,7 +96,7 @@ While this documentation focuses on shutters (ObjectID 800), the protocol struct
 | **Stop** | Yes (PID 253) | Yes | Complete |
 | **Blind Position** | Yes (PID 252) | Yes | Complete |
 | **Slat/Tilt Position** | Yes (PID 251) | **No** | Missing |
-| **Moving Status** | Yes (PID 247) | **No** | Missing |
+| **Moving Status** | Yes (PID 247) | **Yes** (only to end "opening/closing"; direction comes from the command) | Partial |
 | **Block State** | Yes (PID 242) | **No** | Missing |
 | **Op Mode Detection** | Yes (PID 162) | **No** | Manual |
 

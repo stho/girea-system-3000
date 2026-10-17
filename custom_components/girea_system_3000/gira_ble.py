@@ -1,6 +1,7 @@
 """Bluetooth LE communication for Gira System 3000 devices."""
 import asyncio
 import time
+from typing import Any
 
 from bleak import BleakClient, BleakError
 from bleak_retry_connector import establish_connection
@@ -60,6 +61,8 @@ VALUE_STOP = 0x00 # Stop command uses 0x00 as its value
 GIRA_MANUFACTURER_ID = 1412
 # The correct, full prefix for a position broadcast
 BROADCAST_PREFIX = bytearray.fromhex("F7032001F61001")
+# Prefix of the movement status broadcast (property f7)
+MOVEMENT_PREFIX = bytearray.fromhex("F7032001F71001")
 
 
 def _error(key: str, **placeholders: object) -> HomeAssistantError:
@@ -91,7 +94,7 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
         self._device_name = name  # Store name separately since 'name' property is read-only
         # The base class does not define `data`. Entities read it, so it has to
         # exist before the first broadcast (or an "unavailable" event) arrives.
-        self.data: dict[str, int] | None = None
+        self.data: dict[str, Any] | None = None
         self._last_advertisement: tuple[dict[int, str], dict[str, str]] | None = None
         LOGGER.debug("Created coordinator instance for %s (%s)", name, address)
 
@@ -138,33 +141,55 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
         if not manufacturer_data:
             return
 
-        # Check if the BROADCAST_PREFIX is anywhere within the manufacturer_data
-        prefix_index = manufacturer_data.find(BROADCAST_PREFIX)
-        if prefix_index == -1:
+        # Each broadcast carries one property (position, movement status, ...).
+        # Merge it into the known data instead of replacing everything.
+        data = dict(self.data or {})
+        changed = False
+
+        position_byte = self._read_property(manufacturer_data, BROADCAST_PREFIX)
+        if position_byte is not None:
+            data["position"] = round(100 * (255 - position_byte) / 255)
+            changed = True
+            LOGGER.debug(
+                "Gira position broadcast from %s. Raw data: %s, Position byte: %s, HA Position: %s%%",
+                self._device_name,
+                manufacturer_data.hex(),
+                position_byte,
+                data["position"],
+            )
+
+        movement_byte = self._read_property(manufacturer_data, MOVEMENT_PREFIX)
+        if movement_byte is not None:
+            # 0-1: stopped, >1: moving (see GIRA_SYSTEM_3000_BLUETOOTH.md)
+            data["moving"] = movement_byte > 1
+            # Lets the entity tell a new broadcast from an old, repeated value
+            data["moving_updated"] = time.monotonic()
+            changed = True
+            LOGGER.debug(
+                "Gira movement broadcast from %s. Raw data: %s, status byte: %s",
+                self._device_name,
+                manufacturer_data.hex(),
+                movement_byte,
+            )
+
+        if not changed:
             return
 
-        # Ensure we have enough bytes after the prefix to read the position
-        position_index = prefix_index + len(BROADCAST_PREFIX)
-        if len(manufacturer_data) <= position_index:
-            LOGGER.debug("Not enough data after broadcast prefix")
-            return
-
-        # Extract the position byte, which is 1 byte after the prefix
-        position_byte = manufacturer_data[position_index]
-        ha_position = round(100 * (255 - position_byte) / 255)
-
-        LOGGER.debug(
-            "Gira broadcast received from %s. Raw data: %s, Position byte: %s, HA Position: %s%%",
-            self._device_name,
-            manufacturer_data.hex(),
-            position_byte,
-            ha_position,
-        )
-
-        self.data = {"position": ha_position}
+        self.data = data
         # The base class marks the device available and notifies the listeners.
         super()._async_handle_bluetooth_event(service_info, change)
 
+    @staticmethod
+    def _read_property(manufacturer_data: bytes, prefix: bytearray) -> int | None:
+        """Return the value byte following the prefix, or None if not present."""
+        prefix_index = manufacturer_data.find(prefix)
+        if prefix_index == -1:
+            return None
+        value_index = prefix_index + len(prefix)
+        if len(manufacturer_data) <= value_index:
+            LOGGER.debug("Not enough data after broadcast prefix")
+            return None
+        return manufacturer_data[value_index]
 
 
 def _generate_command(property_id: int, value: int) -> bytearray:

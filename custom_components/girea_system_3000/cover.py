@@ -1,6 +1,7 @@
 """Platform for the Girea System 3000 cover integration."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from homeassistant.components.cover import (
@@ -8,13 +9,22 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import async_call_later
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN, LOGGER, MANUFACTURER, MODEL, get_device_id
 from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
+
+# A full run of the shutter takes about 65 s. If no "stopped" status arrives, the
+# opening/closing state is reset after this time so it can never get stuck.
+MOVEMENT_TIMEOUT = 75  # seconds
+# Right after a command the device may still report its old "stopped" status
+# (the status only arrives with a delay). "Stopped" broadcasts are ignored for
+# this long, so they do not cancel the movement that was just started.
+MOVEMENT_STATUS_GRACE = 20  # seconds
 
 
 async def async_setup_entry(
@@ -72,6 +82,11 @@ class GireaSystem3000Cover(
             model=MODEL,
         )
         self._attr_current_cover_position = None  # Initialize the state to None
+        self._attr_is_opening = False
+        self._attr_is_closing = False
+        self._movement_started: float | None = None
+        self._movement_timeout: CALLBACK_TYPE | None = None
+        self._last_movement_update: float | None = None
         LOGGER.debug("Created cover entity for %s", client.name)
 
     @property
@@ -85,18 +100,70 @@ class GireaSystem3000Cover(
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
         await self._client.send_up_command()
+        self._start_movement(opening=True)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover."""
         await self._client.send_down_command()
+        self._start_movement(opening=False)
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
         await self._client.send_stop_command()
+        self._stop_movement()
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Set cover position."""
-        await self._client.set_absolute_position(kwargs['position'])
+        target = kwargs["position"]
+        current = self.current_cover_position
+        await self._client.set_absolute_position(target)
+        if current is None or target == current:
+            # Direction unknown (or nothing to do): do not guess
+            self._stop_movement()
+        else:
+            self._start_movement(opening=target > current)
+
+    @callback
+    def _start_movement(self, *, opening: bool) -> None:
+        """Show opening/closing right after a command, without waiting for the device.
+
+        The direction comes from the command that was sent. The device's own
+        status broadcast only arrives after a delay and ends the movement again.
+        """
+        self._cancel_movement_timeout()
+        self._attr_is_opening = opening
+        self._attr_is_closing = not opening
+        self._movement_started = time.monotonic()
+        self._movement_timeout = async_call_later(
+            self.hass, MOVEMENT_TIMEOUT, self._async_movement_timeout
+        )
+        self.async_write_ha_state()
+
+    @callback
+    def _stop_movement(self) -> None:
+        """Reset the opening/closing state."""
+        self._cancel_movement_timeout()
+        self._movement_started = None
+        if self._attr_is_opening or self._attr_is_closing:
+            self._attr_is_opening = False
+            self._attr_is_closing = False
+        self.async_write_ha_state()
+
+    @callback
+    def _async_movement_timeout(self, _now: object) -> None:
+        """Safety net: no "stopped" status arrived in time."""
+        self._movement_timeout = None
+        self._stop_movement()
+
+    def _cancel_movement_timeout(self) -> None:
+        if self._movement_timeout is not None:
+            self._movement_timeout()
+            self._movement_timeout = None
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Cancel the pending timer."""
+        self._cancel_movement_timeout()
+        await super().async_will_remove_from_hass()
 
     @property
     def current_cover_position(self) -> int | None:
@@ -124,4 +191,16 @@ class GireaSystem3000Cover(
                     "Cover entity received update. New position: %s",
                     self.current_cover_position,
                 )
+
+            # A new "stopped" status ends the opening/closing state, unless it is
+            # old (repeated) or arrived right after a command (see grace period).
+            updated = self.coordinator.data.get("moving_updated")
+            if updated is not None and updated != self._last_movement_update:
+                self._last_movement_update = updated
+                if (
+                    not self.coordinator.data.get("moving")
+                    and self._movement_started is not None
+                    and updated - self._movement_started > MOVEMENT_STATUS_GRACE
+                ):
+                    self._stop_movement()
         self.async_write_ha_state()

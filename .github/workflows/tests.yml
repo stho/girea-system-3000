@@ -1,0 +1,29 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  lint:
+    name: Ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/ruff-action@v3
+
+  tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The tests use stand-ins for Home Assistant and bleak and need no
+      # dependencies. They cover the logic of the integration (parsing, commands,
+      # cover state), not Home Assistant itself.
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -t . -v

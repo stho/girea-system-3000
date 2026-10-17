@@ -5,7 +5,6 @@ from typing import Any
 
 from bleak import BleakClient, BleakError
 from bleak_retry_connector import establish_connection
-
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.components.bluetooth.passive_update_coordinator import (

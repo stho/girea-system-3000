@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.4.0
+## Release 1.2.0
 
 ### Added
 - Opening / closing state. The cover now shows "opening" or "closing" right

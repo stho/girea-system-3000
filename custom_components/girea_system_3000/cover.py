@@ -21,6 +21,11 @@ from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
 # A full run of the shutter takes about 65 s. If no "stopped" status arrives, the
 # opening/closing state is reset after this time so it can never get stuck.
 MOVEMENT_TIMEOUT = 75  # seconds
+# Measured run time: about 0.65 s per percent of travel (full run ~65 s). The
+# device's status/position broadcasts can arrive 15-50 s late, so the end of a
+# movement is estimated from the distance, and corrected by the next broadcast.
+SECONDS_PER_PERCENT = 0.65
+MOVEMENT_MARGIN = 3  # seconds added to the estimate
 # Right after a command the device may still report its old "stopped" status
 # (the status only arrives with a delay). "Stopped" broadcasts are ignored for
 # this long, so they do not cancel the movement that was just started.
@@ -85,8 +90,10 @@ class GireaSystem3000Cover(
         self._attr_is_opening = False
         self._attr_is_closing = False
         self._movement_started: float | None = None
+        self._movement_target: int | None = None
         self._movement_timeout: CALLBACK_TYPE | None = None
         self._last_movement_update: float | None = None
+        self._last_position_update: float | None = None
         LOGGER.debug("Created cover entity for %s", client.name)
 
     @property
@@ -100,12 +107,12 @@ class GireaSystem3000Cover(
     async def async_open_cover(self, **kwargs: Any) -> None:
         """Open the cover."""
         await self._client.send_up_command()
-        self._start_movement(opening=True)
+        self._start_movement(opening=True, target=100)
 
     async def async_close_cover(self, **kwargs: Any) -> None:
         """Close the cover."""
         await self._client.send_down_command()
-        self._start_movement(opening=False)
+        self._start_movement(opening=False, target=0)
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
@@ -121,10 +128,10 @@ class GireaSystem3000Cover(
             # Direction unknown (or nothing to do): do not guess
             self._stop_movement()
         else:
-            self._start_movement(opening=target > current)
+            self._start_movement(opening=target > current, target=target)
 
     @callback
-    def _start_movement(self, *, opening: bool) -> None:
+    def _start_movement(self, *, opening: bool, target: int) -> None:
         """Show opening/closing right after a command, without waiting for the device.
 
         The direction comes from the command that was sent. The device's own
@@ -134,8 +141,17 @@ class GireaSystem3000Cover(
         self._attr_is_opening = opening
         self._attr_is_closing = not opening
         self._movement_started = time.monotonic()
+        self._movement_target = target
+        current = self.current_cover_position
+        if current is None:
+            duration = MOVEMENT_TIMEOUT
+        else:
+            duration = min(
+                MOVEMENT_TIMEOUT,
+                abs(target - current) * SECONDS_PER_PERCENT + MOVEMENT_MARGIN,
+            )
         self._movement_timeout = async_call_later(
-            self.hass, MOVEMENT_TIMEOUT, self._async_movement_timeout
+            self.hass, duration, self._async_movement_timeout
         )
         self.async_write_ha_state()
 
@@ -144,6 +160,7 @@ class GireaSystem3000Cover(
         """Reset the opening/closing state."""
         self._cancel_movement_timeout()
         self._movement_started = None
+        self._movement_target = None
         if self._attr_is_opening or self._attr_is_closing:
             self._attr_is_opening = False
             self._attr_is_closing = False
@@ -151,8 +168,14 @@ class GireaSystem3000Cover(
 
     @callback
     def _async_movement_timeout(self, _now: object) -> None:
-        """Safety net: no "stopped" status arrived in time."""
+        """The estimated run time is over: assume the target position was reached.
+
+        A position broadcast that arrives later corrects this, if the shutter
+        was stopped on the way (e.g. with a wall switch).
+        """
         self._movement_timeout = None
+        if self._movement_target is not None:
+            self._attr_current_cover_position = self._movement_target
         self._stop_movement()
 
     def _cancel_movement_timeout(self) -> None:
@@ -184,13 +207,32 @@ class GireaSystem3000Cover(
         """Handle updated data from the coordinator."""
         if self.coordinator.data is not None:
             new_position = self.coordinator.data.get("position")
-            # Only update the state if a new position is available
+            # Only apply a position that was received since the last update. The
+            # data also holds the old value while other broadcasts arrive, which
+            # would overwrite the estimated end position.
+            position_updated = self.coordinator.data.get("position_updated")
+            if position_updated == self._last_position_update:
+                new_position = None
+            else:
+                self._last_position_update = position_updated
             if new_position is not None:
                 self._attr_current_cover_position = new_position
                 LOGGER.debug(
                     "Cover entity received update. New position: %s",
                     self.current_cover_position,
                 )
+
+            # The target position was reported: the movement is over. Ignored in the
+            # grace period, where an old position (e.g. the previous end position)
+            # may still be reported.
+            if (
+                self._movement_started is not None
+                and self._movement_target is not None
+                and new_position is not None
+                and abs(new_position - self._movement_target) <= 2
+                and time.monotonic() - self._movement_started > MOVEMENT_STATUS_GRACE
+            ):
+                self._stop_movement()
 
             # A new "stopped" status ends the opening/closing state, unless it is
             # old (repeated) or arrived right after a command (see grace period).

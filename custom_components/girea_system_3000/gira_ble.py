@@ -149,6 +149,7 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
         position_byte = self._read_property(manufacturer_data, BROADCAST_PREFIX)
         if position_byte is not None:
             data["position"] = round(100 * (255 - position_byte) / 255)
+            data["position_updated"] = time.monotonic()
             changed = True
             LOGGER.debug(
                 "Gira position broadcast from %s. Raw data: %s, Position byte: %s, HA Position: %s%%",

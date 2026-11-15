@@ -1,4 +1,4 @@
-"""Config flow for Girea System 3000 (Gira Reverse Engineered) integration."""
+"""Config flow for System 3000 integration."""
 from __future__ import annotations
 
 from typing import Any

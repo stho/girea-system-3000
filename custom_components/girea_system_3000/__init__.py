@@ -1,4 +1,4 @@
-"""The Girea System 3000 (Gira Reverse Engineered) integration."""
+"""The System 3000 integration."""
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr

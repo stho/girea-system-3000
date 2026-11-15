@@ -3,7 +3,7 @@
 This is a custom component for Home Assistant to integrate the Gira System 3000 devices via
 espHome bluetooth proxy or other bluetooth adapters.
 
-Currently just the shutter controller "Jal+Schaltuhr" is implemented and tested.
+Currently the shutter controller "Jal+Schaltuhr" is implemented and tested. The room thermostat is supported read only (measured and target temperature from the Bluetooth broadcasts, experimental): choose the device type "Room thermostat" when adding it by MAC address.
 
 > [!NOTE]
 > Code was generated with Gemini 2.5 Flash support.

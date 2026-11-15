@@ -63,6 +63,76 @@ BROADCAST_PREFIX = bytearray.fromhex("F7032001F61001")
 # Prefix of the movement status broadcast (property f7)
 MOVEMENT_PREFIX = bytearray.fromhex("F7032001F71001")
 
+# --- Room thermostat broadcasts (reverse engineered, not yet confirmed) ---
+# Same layout as above, with other object IDs. The value are two bytes in the KNX
+# DPT 9 format (16 bit float), e.g. 0x0C1A = 21.0 degrees.
+#   object 0x0141, property 0xFE: measured temperature (assumed)
+#   object 0x0065, property 0xFF: target temperature   (assumed)
+THERMOSTAT_TEMPERATURE_PREFIX = bytearray.fromhex("F7014101FE1001")
+THERMOSTAT_SETPOINT_PREFIX = bytearray.fromhex("F7006501FF1001")
+DPT9_INVALID = 0x7FFF
+
+
+def decode_dpt9(raw: bytes) -> float | None:
+    """Decode a KNX DPT 9 (two byte float). Returns None for the "invalid" value.
+
+    Layout: SEEEEMMM MMMMMMMM, value = 0.01 * M * 2**E with M as 11 bit
+    two's complement number.
+    """
+    if len(raw) != 2:
+        return None
+    value = int.from_bytes(raw, "big")
+    if value == DPT9_INVALID:
+        return None
+    exponent = (value >> 11) & 0x0F
+    mantissa = value & 0x07FF
+    if value & 0x8000:
+        mantissa -= 2048
+    return round(0.01 * mantissa * (1 << exponent), 2)
+
+
+# --- Room thermostat commands (taken from a Bluetooth HCI log of the Gira app) ---
+# Notification characteristic: the thermostat answers and reports changes here.
+GIRA_NOTIFY_CHARACTERISTIC_UUID = "9769c769-f77a-43ae-8c35-09f0c5245308"
+# Write the target temperature: F6 | object 0065 | instance 01 | property F5 | 10 01 | DPT9
+THERMOSTAT_SET_SETPOINT_PREFIX = bytearray.fromhex("F6006501F51001")
+# Step the target temperature by 0.5 degrees: property F6, value 01 = up, 00 = down
+THERMOSTAT_STEP_PREFIX = bytearray.fromhex("F6006501F61001")
+SETPOINT_MIN = 7.0
+SETPOINT_MAX = 30.0
+SETPOINT_STEP = 0.5
+
+
+def encode_dpt9(value: float) -> bytes:
+    """Encode a temperature as KNX DPT 9 (two byte float), the inverse of decode_dpt9."""
+    mantissa = round(value * 100)
+    exponent = 0
+    while not -2048 <= mantissa <= 2047:
+        mantissa = round(value * 100 / (1 << (exponent + 1)))
+        exponent += 1
+        if exponent > 15:
+            raise ValueError(f"{value} cannot be encoded as DPT 9")
+    raw = (exponent << 11) | (mantissa & 0x07FF)
+    if mantissa < 0:
+        raw |= 0x8000
+    return raw.to_bytes(2, "big")
+
+
+def generate_setpoint_command(temperature: float) -> bytearray:
+    """Generate the command that sets the target temperature of the thermostat."""
+    if not SETPOINT_MIN <= temperature <= SETPOINT_MAX:
+        raise ValueError(
+            f"Temperature must be between {SETPOINT_MIN} and {SETPOINT_MAX} degrees."
+        )
+    # The thermostat works in steps of 0.5 degrees
+    temperature = round(temperature * 2) / 2
+    return THERMOSTAT_SET_SETPOINT_PREFIX + encode_dpt9(temperature)
+
+
+def generate_setpoint_step_command(up: bool) -> bytearray:
+    """Generate the command that raises or lowers the target temperature by 0.5."""
+    return THERMOSTAT_STEP_PREFIX + (b"\x01" if up else b"\x00")
+
 
 def _error(key: str, **placeholders: object) -> HomeAssistantError:
     """Return a HomeAssistantError whose text is translated by Home Assistant.
@@ -172,12 +242,46 @@ class GiraPassiveBluetoothDataUpdateCoordinator(PassiveBluetoothDataUpdateCoordi
                 movement_byte,
             )
 
+        # Room thermostat: temperatures as DPT 9 values (see decode_dpt9)
+        for key, prefix in (
+            ("temperature", THERMOSTAT_TEMPERATURE_PREFIX),
+            ("setpoint", THERMOSTAT_SETPOINT_PREFIX),
+        ):
+            raw = self._read_bytes(manufacturer_data, prefix, 2)
+            if raw is None:
+                continue
+            value = decode_dpt9(raw)
+            if value is None:
+                continue
+            data[key] = value
+            changed = True
+            LOGGER.debug(
+                "Gira thermostat broadcast from %s. Raw data: %s, %s: %s",
+                self._device_name,
+                manufacturer_data.hex(),
+                key,
+                value,
+            )
+
         if not changed:
             return
 
         self.data = data
         # The base class marks the device available and notifies the listeners.
         super()._async_handle_bluetooth_event(service_info, change)
+
+    @staticmethod
+    def _read_bytes(
+        manufacturer_data: bytes, prefix: bytearray, length: int
+    ) -> bytes | None:
+        """Return the `length` bytes following the prefix, or None if not present."""
+        prefix_index = manufacturer_data.find(prefix)
+        if prefix_index == -1:
+            return None
+        start = prefix_index + len(prefix)
+        if len(manufacturer_data) < start + length:
+            return None
+        return bytes(manufacturer_data[start : start + length])
 
     @staticmethod
     def _read_property(manufacturer_data: bytes, prefix: bytearray) -> int | None:
@@ -216,11 +320,16 @@ class GiraBLEClient:
     after the last command, so that follow-up commands are sent faster.
     """
 
-    def __init__(self, hass: HomeAssistant, address: str, name: str) -> None:
+    def __init__(
+        self, hass: HomeAssistant, address: str, name: str, thermostat: bool = False
+    ) -> None:
         """Initialize the client."""
         self.hass = hass
         self.address = address
         self.name = name
+        # The thermostat app enables notifications before it writes; do the same
+        self._thermostat = thermostat
+        self._notify_client: BleakClient | None = None
         self._client: BleakClient | None = None
         self._lock = asyncio.Lock()
         self._idle_timer: CALLBACK_TYPE | None = None
@@ -327,12 +436,23 @@ class GiraBLEClient:
 
     async def _async_write(self, client: BleakClient, command: bytearray) -> None:
         """Write the command and wait until the device confirmed it."""
+        if self._thermostat and self._notify_client is not client:
+            await client.start_notify(
+                GIRA_NOTIFY_CHARACTERISTIC_UUID, self._on_notification
+            )
+            self._notify_client = client
         LOGGER.debug("Sending command: %s", command.hex())
         # response=True is crucial: the command is only done when the device confirmed it
         await client.write_gatt_char(GIRA_COMMAND_CHARACTERISTIC_UUID, command, response=True)
 
+    def _on_notification(self, _characteristic: Any, data: bytearray) -> None:
+        """Log what the thermostat reports while the connection is open."""
+        LOGGER.debug("Notification from %s: %s", self.name, bytes(data).hex())
+
     def _on_disconnected(self, client: BleakClient) -> None:
         """Forget the connection when the device or the adapter closed it."""
+        if self._notify_client is client:
+            self._notify_client = None
         if self._client is client:
             LOGGER.debug("The connection to %s was closed.", self.name)
             self._client = None
@@ -448,3 +568,7 @@ class GiraBLEClient:
         """Set the absolute position of the blinds (0-100%)."""
         command = generate_position_command(percentage)
         await self.send_command(command)
+
+    async def set_setpoint(self, temperature: float) -> None:
+        """Set the target temperature of the room thermostat."""
+        await self.send_command(generate_setpoint_command(temperature))

@@ -4,10 +4,25 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
-from .const import DOMAIN, LOGGER, get_device_id
+from .const import (
+    CONF_DEVICE_TYPE,
+    DEVICE_TYPE_COVER,
+    DEVICE_TYPE_THERMOSTAT,
+    DOMAIN,
+    LOGGER,
+    get_device_id,
+)
 from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
 
-PLATFORMS = ["cover"]
+PLATFORMS_BY_DEVICE_TYPE = {
+    DEVICE_TYPE_COVER: ["cover"],
+    DEVICE_TYPE_THERMOSTAT: ["climate", "sensor"],
+}
+
+
+def _platforms(entry: ConfigEntry) -> list[str]:
+    """Platforms of the entry. Entries without a device type are shutters."""
+    return PLATFORMS_BY_DEVICE_TYPE[entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_COVER)]
 
 
 def _async_get_entry_device(
@@ -57,11 +72,15 @@ def _async_migrate_registry_ids(
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Girea System 3000 from a config entry."""
     address = entry.data["address"]
-    name = entry.data.get("name", f"Gira Shutter {address[-5:].replace(':', '')}")
+    device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_COVER)
+    kind = "Thermostat" if device_type == DEVICE_TYPE_THERMOSTAT else "Shutter"
+    name = entry.data.get("name", f"Gira {kind} {address[-5:].replace(':', '')}")
 
     # Must run before the platforms are set up, so the entity finds its old
-    # registry entry instead of creating a second one.
-    _async_migrate_registry_ids(hass, entry, address)
+    # registry entry instead of creating a second one. Only shutters have
+    # entries from before the MAC based IDs.
+    if device_type == DEVICE_TYPE_COVER:
+        _async_migrate_registry_ids(hass, entry, address)
 
     # Create the coordinator that will listen for broadcasts
     coordinator = GiraPassiveBluetoothDataUpdateCoordinator(
@@ -71,7 +90,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     # Create the client that will send commands
-    client = GiraBLEClient(hass, address, name)
+    client = GiraBLEClient(
+        hass, address, name, thermostat=device_type == DEVICE_TYPE_THERMOSTAT
+    )
 
     # Store both client and coordinator
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
@@ -79,9 +100,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "client": client,
     }
 
-    # Forward the setup to the 'cover' platform.
+    # Forward the setup to the platforms of the device type ('cover' or 'sensor').
     # The coordinator will automatically start listening when the entity subscribes to it.
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    await hass.config_entries.async_forward_entry_setups(entry, _platforms(entry))
 
     # Only start the coordinator after all platforms have had a chance to subscribe.
     entry.async_on_unload(coordinator.async_start())
@@ -94,7 +115,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     # The coordinator handles its own cleanup of the bluetooth callback.
-    unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unload_ok = await hass.config_entries.async_unload_platforms(entry, _platforms(entry))
 
     if unload_ok:
         data = hass.data[DOMAIN].pop(entry.entry_id)

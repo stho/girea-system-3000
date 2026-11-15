@@ -102,3 +102,69 @@ While this documentation focuses on shutters (ObjectID 800), the protocol struct
 
 ### Implementation Recommendation
 To improve the integration, the `GiraPassiveBluetoothDataUpdateCoordinator` should be updated to listen for PIDs `0xF5` (Slat position).
+
+---
+
+## 6. Room Thermostat
+
+Analysed from the broadcasts and from notification logs (nRF Connect) taken while
+the target temperature was changed on the device and in the Gira app.
+
+### GATT
+| Item | UUID | Properties |
+| :--- | :--- | :--- |
+| Service | `9769f147-f77a-43ae-8c35-09f0c5245308` | primary |
+| Command characteristic | `97696341-f77a-43ae-8c35-09f0c5245308` | Write (same as the shutter) |
+| Status characteristic | `9769c769-f77a-43ae-8c35-09f0c5245308` | Notify, Read (CCCD `0x2902`) |
+
+The device must be bonded (pairing mode) before a client can connect. In pairing
+mode it advertises the local name `Thermostat`, flags `05` and manufacturer data
+`05 91 4a 09 01 15`.
+
+### Message format = KNX cEMI
+The frames are KNX cEMI interface object server frames, not a Gira specific
+format:
+
+`[MessageCode] [ObjectType 2 bytes] [Instance 1 byte] [PropertyID] [NoE/Start 2 bytes = 0x10 0x01] [Data]`
+
+`10 01` is "1 element, start index 1" (the number of elements is 4 bits, the
+start index 12 bits), **not** "start index" and "value length" as in section 1.
+The length of the data depends on the property (1 byte for binary/enum values,
+2 bytes for temperatures), it is not part of the frame.
+
+| Code | cEMI name | Seen |
+| :--- | :--- | :--- |
+| `F6` | M_PropWrite.req | commands to the shutter (see above) |
+| `F5` | M_PropWrite.con | notification after the app wrote a property (no data) |
+| `F7` | M_PropInfo.ind | broadcasts and spontaneous notifications |
+| `FB` | M_PropRead.con | answers to the reads of the app after connecting |
+
+Temperatures are KNX DPT 9 (16 bit float: `S EEEE MMM MMMMMMMM`, value =
+`0.01 * M * 2^E`), e.g. `0C1A` = 21.0 °C, `07D0` = 20.0 °C, `0CE2` = 25.0 °C.
+
+### Properties
+| ObjectType | PID | Type | Meaning | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x0141` | `0xFE` | DPT 9 | measured temperature (e.g. `07F2` = 20.34 °C), changes slowly | very likely |
+| `0x0065` | `0xFF` | DPT 9 | target temperature | confirmed |
+| `0x0065` | `0xF5` | DPT 9 | target temperature, always sent together with `0xFF` | confirmed |
+| `0x0065` | `0xF4` | byte | `01` after the target was changed on the device | unknown meaning |
+| `0x0065` | `0xA1` / `0xA0` / `0xA2` | DPT 9 | 7.0 / 18.0 / 24.0 °C (limits or presets) | unknown meaning |
+| `0x0065` | `0x9F` / `0xA3` | DPT 9 | 21.0 °C | unknown meaning |
+| `0x0000` | `0x0B` | 6 bytes | device ID `00 0A 4A 09 01 15`; the last four bytes are the first bytes of the broadcast manufacturer data | |
+| `0x0000` | `0x02` | text | name ("Thermostat Kü…", read in several blocks) | |
+
+The target temperature changes in steps of 0.5 °C. Changing it on the device
+(20.0 -> 20.5 -> 21.0) and in the app (22.0 -> 25.0) both produce a pair of `F7`
+notifications for `0xF5` and `0xFF` with the new value.
+
+### Setting the target temperature (not yet confirmed)
+For every step the app wrote one property to ObjectType `0x0065`: the device
+answers with `F5 00 65 01 F6 10 01` (write confirmation of PID `0xF6`) and then
+sends the new target temperature. The data of that write is not part of the
+notification log. The command is therefore probably
+
+`F6 00 65 01 F6 10 01 [DPT 9 target]`, written to `97696341-...`
+
+but the PID and the data (absolute value or relative step) must still be
+confirmed, e.g. with an Android Bluetooth HCI snoop log of the app.

@@ -3,13 +3,15 @@
     "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "Gira-Rollladensteuerung hinzufügen",
-        "description": "Gib die Bluetooth-MAC-Adresse deiner Gira „Jal+Schaltuhr“ ein und wähle einen Namen. Das Gerät muss sich im Pairing-Modus und in Reichweite deines Bluetooth-Adapters oder -Proxys befinden. Es wird einmal verbunden und gepairt, um zu prüfen, ob es erreichbar ist.",
+        "title": "Gira-System-3000-Gerät hinzufügen",
+        "description": "Wähle den Gerätetyp, gib die Bluetooth-MAC-Adresse des Gira-Geräts ein und wähle einen Namen. Eine Rollladensteuerung („Jal+Schaltuhr“) wird einmal verbunden und gepairt, um zu prüfen, ob sie erreichbar ist, und muss sich daher im Pairing-Modus befinden. Ein Raumthermostat wird nur aus seinen Bluetooth-Broadcasts gelesen, er muss lediglich von einem Adapter oder Proxy gesehen werden.",
         "data": {
+          "device_type": "Gerätetyp",
           "address": "Bluetooth-MAC-Adresse",
           "name": "Name"
         },
         "data_description": {
+          "device_type": "Gerätetyp.",
           "address": "Die MAC-Adresse, wie sie im Bluetooth-Monitor von Home Assistant angezeigt wird, z. B. AA:BB:CC:DD:EE:FF.",
           "name": "Der Name des Geräts in Home Assistant."
         }
@@ -48,6 +50,24 @@
     },
     "connect_failed": {
       "message": "Verbindung zu {name} ({address}) fehlgeschlagen: {error}"
+    }
+  },
+  "selector": {
+    "device_type": {
+      "options": {
+        "cover": "Rollladensteuerung (Jal+Schaltuhr)",
+        "thermostat": "Raumthermostat"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Temperatur"
+      },
+      "setpoint": {
+        "name": "Solltemperatur"
+      }
     }
   }
 }

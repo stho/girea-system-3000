@@ -10,6 +10,14 @@ DOMAIN = "girea_system_3000"
 
 MANUFACTURER = "Gira"
 MODEL = "Jal+Schaltuhr"
+MODEL_THERMOSTAT = "Raumtemperaturregler"
+
+# Kind of device of a config entry. Entries created before the thermostat was
+# supported have no CONF_DEVICE_TYPE and are shutters.
+CONF_DEVICE_TYPE = "device_type"
+DEVICE_TYPE_COVER = "cover"
+DEVICE_TYPE_THERMOSTAT = "thermostat"
+DEVICE_TYPES = (DEVICE_TYPE_COVER, DEVICE_TYPE_THERMOSTAT)
 
 # This LOGGER object is now defined in a central place
 # and can be imported and used throughout the integration.

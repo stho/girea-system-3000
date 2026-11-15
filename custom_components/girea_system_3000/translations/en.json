@@ -3,13 +3,15 @@
     "flow_title": "{name}",
     "step": {
       "user": {
-        "title": "Add Gira shutter controller",
-        "description": "Enter the Bluetooth MAC address of your Gira \"Jal+Schaltuhr\" and choose a name. The device must be in pairing mode and within range of your Bluetooth adapter or proxy. It is connected and paired once to check that it can be reached.",
+        "title": "Add Gira System 3000 device",
+        "description": "Choose the device type, enter the Bluetooth MAC address of the Gira device and a name. A shutter control (\"Jal+Schaltuhr\") is connected and paired once to check that it can be reached, so it must be in pairing mode. A room thermostat is only read from its Bluetooth broadcasts, it just has to be seen by an adapter or proxy.",
         "data": {
+          "device_type": "Device type",
           "address": "Bluetooth MAC address",
           "name": "Name"
         },
         "data_description": {
+          "device_type": "Device type.",
           "address": "The MAC address as shown in the Home Assistant Bluetooth monitor, e.g. AA:BB:CC:DD:EE:FF.",
           "name": "The name of the device in Home Assistant."
         }
@@ -48,6 +50,24 @@
     },
     "connect_failed": {
       "message": "Failed to connect to {name} ({address}): {error}"
+    }
+  },
+  "selector": {
+    "device_type": {
+      "options": {
+        "cover": "Shutter control (Jal+Schaltuhr)",
+        "thermostat": "Room thermostat"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "temperature": {
+        "name": "Temperature"
+      },
+      "setpoint": {
+        "name": "Target temperature"
+      }
     }
   }
 }

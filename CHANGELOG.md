@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- Gira room thermostat (read only): measured and target temperature as sensors,
+  taken from the Bluetooth broadcasts (no connection needed). Choose the device
+  type "Room thermostat" when adding the device. The target temperature is
+  confirmed by logs, the measured temperature is very likely, see
+  `GIRA_SYSTEM_3000_BLUETOOTH.md`.
+
 ## Release 1.2.0
 
 ### Added

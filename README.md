@@ -7,6 +7,8 @@ Currently the shutter controller "Jal+Schaltuhr" is implemented and tested. The 
 
 > [!NOTE]
 > Code was generated with Gemini 2.5 Flash support.
+> The room thermostat support (sensors, setpoint, week schedule, the Bluetooth protocol analysis and
+> the dashboard card) was developed with the help of AI ([Claude Code](https://claude.com/claude-code)).
 
 ## Installation
 

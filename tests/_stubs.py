@@ -128,7 +128,7 @@ def _install() -> None:
     )
     _module("homeassistant.helpers.event", async_call_later=_async_call_later)
     _module("homeassistant.exceptions", HomeAssistantError=HomeAssistantError)
-    _module("bleak", BleakClient=object, BleakError=Exception)
+    _module("bleak", BleakClient=object, BleakError=type("BleakError", (Exception,), {}))
     sys.modules["bleak_retry_connector"].establish_connection = None
 
 

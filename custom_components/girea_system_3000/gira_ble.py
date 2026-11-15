@@ -1,6 +1,8 @@
 """Bluetooth LE communication for Gira System 3000 devices."""
 import asyncio
 import time
+from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from bleak import BleakClient, BleakError
@@ -132,6 +134,125 @@ def generate_setpoint_command(temperature: float) -> bytearray:
 def generate_setpoint_step_command(up: bool) -> bytearray:
     """Generate the command that raises or lowers the target temperature by 0.5."""
     return THERMOSTAT_STEP_PREFIX + (b"\x01" if up else b"\x00")
+
+
+# --- KNX cEMI property services (see GIRA_SYSTEM_3000_BLUETOOTH.md, section 6) ---
+# Frame: [code] [object type, 2 bytes] [instance 01] [property ID]
+#        [number of elements (4 bits) and start index (12 bits)] [data]
+# The device answers every request with the code minus one (FC -> FB, F6 -> F5)
+# and the same header, without data for a write. 0 elements means an error.
+CEMI_PROP_READ_REQ = 0xFC
+CEMI_PROP_WRITE_REQ = 0xF6
+
+# Time program, "erweitert" mode: index 0 = number of entries (UInt16),
+# index 1..n = entries of 10 bytes (see schedule.py)
+OBJ_SCHEDULE = 0x03F4
+PID_SCHEDULE_ENTRIES = 0x9C
+# Mode of the time program: 00 = standard (3 timers, Mo-Fr and Sa+So blocks),
+# 01 = erweitert (up to 40 free switch points). Switching it resets the list.
+OBJ_SCHEDULE_MODE = 0x0186
+PID_SCHEDULE_MODE = 0xA5
+SCHEDULE_MODE_EXTENDED = 0x01
+# Clock of the device as KNX DPT 19 (date and time), set by the app on connect
+OBJ_CLOCK = 0x03E9
+PID_CLOCK = 0xFF
+# Written by the Gira app when it leaves the time program; the meaning is not
+# known (maybe "apply"). It is sent the same way after writing the schedule.
+SCHEDULE_DONE_COMMAND = bytearray.fromhex("F6C35A0105100102") + bytes(8)
+
+RESPONSE_TIMEOUT = 5  # seconds to wait for the answer to a property request
+
+
+def generate_property_frame(
+    code: int, object_type: int, property_id: int, index: int = 1, data: bytes = b""
+) -> bytearray:
+    """Generate a cEMI property read or write frame for one element."""
+    if not 0 <= index <= 0x0FFF:
+        raise ValueError(f"Index {index} is out of range.")
+    return (
+        bytearray((code,))
+        + object_type.to_bytes(2, "big")
+        + b"\x01"
+        + bytes((property_id,))
+        + ((1 << 12) | index).to_bytes(2, "big")
+        + data
+    )
+
+
+def read_frame(object_type: int, property_id: int, index: int = 1) -> bytearray:
+    """Frame that reads one element of a property."""
+    return generate_property_frame(CEMI_PROP_READ_REQ, object_type, property_id, index)
+
+
+def write_frame(
+    object_type: int, property_id: int, index: int, data: bytes
+) -> bytearray:
+    """Frame that writes one element of a property."""
+    return generate_property_frame(
+        CEMI_PROP_WRITE_REQ, object_type, property_id, index, data
+    )
+
+
+def response_key(frame: bytes) -> tuple[int, bytes, int] | None:
+    """Key that pairs a request with its answer: answer code, object, instance,
+    property and start index (the number of elements is 0 in an error answer).
+    """
+    if len(frame) < 7:
+        return None
+    code = frame[0]
+    if code in (CEMI_PROP_READ_REQ, CEMI_PROP_WRITE_REQ):
+        code -= 1
+    return code, bytes(frame[1:5]), int.from_bytes(frame[5:7], "big") & 0x0FFF
+
+
+def encode_dpt19(when: datetime) -> bytes:
+    """Encode date and time as KNX DPT 19 (8 bytes), as the Gira app sends it.
+
+    Day of week 1 = Monday ... 7 = Sunday. Both flag bytes are 0 (as in the app).
+    """
+    return bytes(
+        (
+            when.year - 1900,
+            when.month,
+            when.day,
+            (when.isoweekday() << 5) | when.hour,
+            when.minute,
+            when.second,
+            0,
+            0,
+        )
+    )
+
+
+def generate_clock_command(when: datetime) -> bytearray:
+    """Command that sets the clock of the thermostat."""
+    return write_frame(OBJ_CLOCK, PID_CLOCK, 1, encode_dpt19(when))
+
+
+def generate_schedule_write_commands(
+    entries: list[bytes], set_mode: bool
+) -> list[bytearray]:
+    """Commands that replace the time program with the given encoded entries.
+
+    The order is the one of the Gira app: (switch to the extended mode,) clear
+    the list by setting the count to 0, append the entries one by one, and
+    finish with the command the app sends when it leaves the time program.
+    """
+    commands = []
+    if set_mode:
+        # Switching the mode resets the list, so it has to happen first
+        commands.append(
+            write_frame(
+                OBJ_SCHEDULE_MODE, PID_SCHEDULE_MODE, 1, bytes((SCHEDULE_MODE_EXTENDED,))
+            )
+        )
+    commands.append(write_frame(OBJ_SCHEDULE, PID_SCHEDULE_ENTRIES, 0, b"\x00\x00"))
+    commands.extend(
+        write_frame(OBJ_SCHEDULE, PID_SCHEDULE_ENTRIES, index, entry)
+        for index, entry in enumerate(entries, start=1)
+    )
+    commands.append(SCHEDULE_DONE_COMMAND)
+    return commands
 
 
 def _error(key: str, **placeholders: object) -> HomeAssistantError:
@@ -334,6 +455,8 @@ class GiraBLEClient:
         self._lock = asyncio.Lock()
         self._idle_timer: CALLBACK_TYPE | None = None
         self._last_used = 0.0
+        # Requests waiting for their answer from the thermostat, see response_key
+        self._pending: dict[tuple[int, bytes, int], asyncio.Future[bytes]] = {}
 
     async def send_command(self, command: bytearray) -> None:
         """Send a command, using the open connection if there is one.
@@ -341,50 +464,76 @@ class GiraBLEClient:
         Raises HomeAssistantError if the device cannot be reached, so the
         failure is shown to the user instead of being swallowed.
         """
+        await self.async_exchange([command])
+
+    async def async_exchange(
+        self, commands: Sequence[bytearray], confirm: bool = False
+    ) -> list[bytes | None]:
+        """Send several commands over one connection, one after the other.
+
+        With confirm=True every command is a cEMI property request and the
+        answer of the thermostat is awaited (only possible for the thermostat,
+        which has notifications enabled). Returns the data of the answers (None
+        without confirm). Raises HomeAssistantError on failure.
+        """
+        if confirm and not self._thermostat:
+            raise ValueError("Only the thermostat answers property requests.")
+        results: list[bytes | None] = []
         async with self._lock:
             self._cancel_idle_timer()
             try:
-                if not await self._async_write_open_connection(command):
-                    await self._async_connect_and_write(command)
+                for command in commands:
+                    sent, result = await self._async_write_open_connection(
+                        command, confirm
+                    )
+                    if not sent:
+                        result = await self._async_connect_and_write(command, confirm)
+                    results.append(result)
             finally:
                 self._last_used = time.monotonic()
                 if self._client is not None:
                     self._schedule_idle_disconnect()
+        return results
 
-    async def _async_write_open_connection(self, command: bytearray) -> bool:
+    async def _async_write_open_connection(
+        self, command: bytearray, confirm: bool
+    ) -> tuple[bool, bytes | None]:
         """Try to send the command over the open connection.
 
-        Returns True if the command was sent. Returns False if there is no usable
-        connection (the caller then connects again). A connection that went stale
-        is dropped. Note that a write whose confirmation got lost is sent again
-        over the new connection; the commands of the cover can safely be repeated.
+        Returns (True, answer) if the command was sent. Returns (False, None) if
+        there is no usable connection (the caller then connects again). A
+        connection that went stale is dropped. Note that a write whose
+        confirmation got lost is sent again over the new connection; the
+        commands of the cover and the property writes can safely be repeated.
         """
         client = self._client
         if client is None:
-            return False
+            return False, None
         if not client.is_connected:
             await self._async_drop_connection()
-            return False
+            return False, None
 
         try:
             started = time.monotonic()
-            async with asyncio.timeout(WRITE_TIMEOUT):
-                await self._async_write(client, command)
+            async with asyncio.timeout(WRITE_TIMEOUT + (RESPONSE_TIMEOUT if confirm else 0)):
+                result = await self._async_write(client, command, confirm)
         except (BleakError, TimeoutError) as e:
             LOGGER.debug(
                 "The open connection to %s did not work (%s), connecting again.", self.name, e
             )
             await self._async_drop_connection()
-            return False
+            return False, None
 
         LOGGER.debug(
             "Command sent over the open connection to %s in %.2f s.",
             self.name,
             time.monotonic() - started,
         )
-        return True
+        return True, result
 
-    async def _async_connect_and_write(self, command: bytearray) -> None:
+    async def _async_connect_and_write(
+        self, command: bytearray, confirm: bool = False
+    ) -> bytes | None:
         """Connect to the device and send the command.
 
         The connection is kept open afterwards if the reuse is switched on.
@@ -409,7 +558,7 @@ class GiraBLEClient:
                     max_attempts=MAX_CONNECT_ATTEMPTS,
                 )
                 connected = time.monotonic()
-                await self._async_write(client, command)
+                result = await self._async_write(client, command, confirm)
             LOGGER.debug(
                 "Command sent to %s: connecting took %.2f s, writing %.2f s.",
                 self.name,
@@ -417,6 +566,7 @@ class GiraBLEClient:
                 time.monotonic() - connected,
             )
             keep_open = IDLE_DISCONNECT_DELAY > 0
+            return result
         except TimeoutError as e:
             raise _error(
                 "command_timeout",
@@ -434,25 +584,63 @@ class GiraBLEClient:
             else:
                 await self._async_disconnect(client)
 
-    async def _async_write(self, client: BleakClient, command: bytearray) -> None:
-        """Write the command and wait until the device confirmed it."""
+    async def _async_write(
+        self, client: BleakClient, command: bytearray, confirm: bool = False
+    ) -> bytes | None:
+        """Write the command and wait until the device confirmed it.
+
+        With confirm=True also wait for the cEMI answer and return its data.
+        """
         if self._thermostat and self._notify_client is not client:
             await client.start_notify(
                 GIRA_NOTIFY_CHARACTERISTIC_UUID, self._on_notification
             )
             self._notify_client = client
-        LOGGER.debug("Sending command: %s", command.hex())
-        # response=True is crucial: the command is only done when the device confirmed it
-        await client.write_gatt_char(GIRA_COMMAND_CHARACTERISTIC_UUID, command, response=True)
+
+        key = response_key(command) if confirm else None
+        future: asyncio.Future[bytes] | None = None
+        if key is not None:
+            future = asyncio.get_running_loop().create_future()
+            self._pending[key] = future
+        try:
+            LOGGER.debug("Sending command: %s", command.hex())
+            # response=True is crucial: the command is only done when the device confirmed it
+            await client.write_gatt_char(
+                GIRA_COMMAND_CHARACTERISTIC_UUID, command, response=True
+            )
+            if future is None:
+                return None
+            async with asyncio.timeout(RESPONSE_TIMEOUT):
+                return await future
+        finally:
+            if key is not None and self._pending.get(key) is future:
+                del self._pending[key]
 
     def _on_notification(self, _characteristic: Any, data: bytearray) -> None:
-        """Log what the thermostat reports while the connection is open."""
-        LOGGER.debug("Notification from %s: %s", self.name, bytes(data).hex())
+        """Hand answers to the waiting requests and log everything else."""
+        data = bytes(data)
+        LOGGER.debug("Notification from %s: %s", self.name, data.hex())
+        key = response_key(data)
+        future = self._pending.pop(key, None) if key else None
+        if future is None or future.done():
+            return
+        if data[5] >> 4 == 0:
+            # No element: the device refused the request (data = error code)
+            future.set_exception(
+                _error("property_error", name=self.name, frame=data.hex())
+            )
+        else:
+            future.set_result(data[7:])
 
     def _on_disconnected(self, client: BleakClient) -> None:
         """Forget the connection when the device or the adapter closed it."""
         if self._notify_client is client:
             self._notify_client = None
+            # Answers can no longer arrive; let the requests fail right away
+            for future in self._pending.values():
+                if not future.done():
+                    future.set_exception(BleakError("Disconnected"))
+            self._pending.clear()
         if self._client is client:
             LOGGER.debug("The connection to %s was closed.", self.name)
             self._client = None
@@ -572,3 +760,48 @@ class GiraBLEClient:
     async def set_setpoint(self, temperature: float) -> None:
         """Set the target temperature of the room thermostat."""
         await self.send_command(generate_setpoint_command(temperature))
+
+    async def async_set_clock(self, when: datetime) -> None:
+        """Set the clock of the thermostat (local time)."""
+        await self.async_exchange([generate_clock_command(when)], confirm=True)
+
+    async def async_read_schedule(self) -> tuple[bool, list[bytes]]:
+        """Read the time program of the thermostat.
+
+        Returns whether the extended mode is set and the raw entries (10 bytes
+        each). In the standard mode the entries follow the fixed layout of the
+        Gira app (3 timers with Mo-Fr and Sa+So blocks).
+        """
+        mode, count = await self.async_exchange(
+            [
+                read_frame(OBJ_SCHEDULE_MODE, PID_SCHEDULE_MODE),
+                read_frame(OBJ_SCHEDULE, PID_SCHEDULE_ENTRIES, 0),
+            ],
+            confirm=True,
+        )
+        if not mode or not count or len(count) < 2:
+            raise _error("schedule_read_failed", name=self.name)
+        number = int.from_bytes(count[:2], "big")
+        entries = await self.async_exchange(
+            [
+                read_frame(OBJ_SCHEDULE, PID_SCHEDULE_ENTRIES, index)
+                for index in range(1, number + 1)
+            ],
+            confirm=True,
+        )
+        return mode[0] == SCHEDULE_MODE_EXTENDED, [entry or b"" for entry in entries]
+
+    async def async_write_schedule(self, entries: list[bytes], when: datetime) -> None:
+        """Replace the time program with the given encoded entries.
+
+        Switches to the extended mode if needed and sets the clock, so the
+        switch points apply at the right time.
+        """
+        (mode,) = await self.async_exchange(
+            [read_frame(OBJ_SCHEDULE_MODE, PID_SCHEDULE_MODE)], confirm=True
+        )
+        commands = [generate_clock_command(when)]
+        commands += generate_schedule_write_commands(
+            entries, set_mode=not mode or mode[0] != SCHEDULE_MODE_EXTENDED
+        )
+        await self.async_exchange(commands, confirm=True)

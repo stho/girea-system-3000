@@ -1,6 +1,7 @@
 """The System 3000 integration."""
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
@@ -13,10 +14,11 @@ from .const import (
     get_device_id,
 )
 from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
+from .schedule_manager import ScheduleManager
 
 PLATFORMS_BY_DEVICE_TYPE = {
     DEVICE_TYPE_COVER: ["cover"],
-    DEVICE_TYPE_THERMOSTAT: ["climate", "sensor"],
+    DEVICE_TYPE_THERMOSTAT: ["climate", "sensor", "text", "switch", "button"],
 }
 
 
@@ -69,6 +71,19 @@ def _async_migrate_registry_ids(
         )
 
 
+async def _async_initial_schedule_read(schedule: ScheduleManager, name: str) -> None:
+    """Read the week schedule once; a failure only means it stays unknown."""
+    try:
+        await schedule.async_read()
+    except HomeAssistantError as err:
+        LOGGER.warning(
+            "Could not read the week schedule of %s: %s. Use the button "
+            "'Wochenplan vom Gerät lesen' to try again.",
+            name,
+            err,
+        )
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Girea System 3000 from a config entry."""
     address = entry.data["address"]
@@ -95,10 +110,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     # Store both client and coordinator
-    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+    data = hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "coordinator": coordinator,
         "client": client,
     }
+
+    if device_type == DEVICE_TYPE_THERMOSTAT:
+        # Week schedule: shown from the store, read from the device only once
+        # when nothing is stored yet (reading connects to the device).
+        schedule = ScheduleManager(hass, client, get_device_id(address))
+        await schedule.async_load()
+        data["schedule"] = schedule
+        if not schedule.known:
+            entry.async_create_background_task(
+                hass, _async_initial_schedule_read(schedule, name), "girea_schedule_read"
+            )
 
     # Forward the setup to the platforms of the device type ('cover' or 'sensor').
     # The coordinator will automatically start listening when the entity subscribes to it.

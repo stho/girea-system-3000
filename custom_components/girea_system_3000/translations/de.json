@@ -50,6 +50,36 @@
     },
     "connect_failed": {
       "message": "Verbindung zu {name} ({address}) fehlgeschlagen: {error}"
+    },
+    "schedule_format": {
+      "message": "Ungültiger Tagesplan „{value}“. Format: Temperatur,HH:MM,Temperatur,…, z. B. 5,06:00,21,18:00,5 (ungerade Anzahl Werte, Dezimalpunkt statt Komma)."
+    },
+    "schedule_temperature_invalid": {
+      "message": "„{value}“ ist keine gültige Temperatur."
+    },
+    "schedule_temperature_range": {
+      "message": "Die Temperatur {value} liegt außerhalb von {min}–{max} °C."
+    },
+    "schedule_temperature_step": {
+      "message": "Die Temperatur {value} muss ein Vielfaches von {step} °C sein."
+    },
+    "schedule_time_invalid": {
+      "message": "„{value}“ ist keine gültige Uhrzeit (HH:MM, 00:01–23:59)."
+    },
+    "schedule_time_order": {
+      "message": "Die Uhrzeit {value} muss nach der vorherigen liegen (aufsteigend, nach 00:00)."
+    },
+    "schedule_too_many": {
+      "message": "Der Wochenplan braucht {count} Schaltpunkte, das Thermostat speichert höchstens {max}."
+    },
+    "schedule_incomplete": {
+      "message": "Der Wochenplan des Geräts ist noch nicht bekannt. Lies ihn zuerst vom Gerät oder gib alle sieben Tage ein."
+    },
+    "schedule_read_failed": {
+      "message": "Das Zeitprogramm von {name} konnte nicht gelesen werden."
+    },
+    "property_error": {
+      "message": "{name} hat die Anfrage abgelehnt (Antwort {frame})."
     }
   },
   "selector": {
@@ -67,6 +97,45 @@
       },
       "setpoint": {
         "name": "Solltemperatur"
+      }
+    },
+    "text": {
+      "schedule_1_monday": {
+        "name": "1 Montag"
+      },
+      "schedule_2_tuesday": {
+        "name": "2 Dienstag"
+      },
+      "schedule_3_wednesday": {
+        "name": "3 Mittwoch"
+      },
+      "schedule_4_thursday": {
+        "name": "4 Donnerstag"
+      },
+      "schedule_5_friday": {
+        "name": "5 Freitag"
+      },
+      "schedule_6_saturday": {
+        "name": "6 Samstag"
+      },
+      "schedule_7_sunday": {
+        "name": "7 Sonntag"
+      }
+    },
+    "switch": {
+      "schedule_active": {
+        "name": "Wochenplan aktiv"
+      }
+    },
+    "button": {
+      "schedule_apply": {
+        "name": "Wochenplan übertragen"
+      },
+      "schedule_discard": {
+        "name": "Wochenplan-Entwurf verwerfen"
+      },
+      "schedule_read": {
+        "name": "Wochenplan vom Gerät lesen"
       }
     }
   }

@@ -50,6 +50,36 @@
     },
     "connect_failed": {
       "message": "Failed to connect to {name} ({address}): {error}"
+    },
+    "schedule_format": {
+      "message": "Invalid day schedule \"{value}\". Format: temperature,HH:MM,temperature,..., e.g. 5,06:00,21,18:00,5 (odd number of values, decimal point instead of comma)."
+    },
+    "schedule_temperature_invalid": {
+      "message": "\"{value}\" is not a valid temperature."
+    },
+    "schedule_temperature_range": {
+      "message": "The temperature {value} is outside of {min}-{max} °C."
+    },
+    "schedule_temperature_step": {
+      "message": "The temperature {value} must be a multiple of {step} °C."
+    },
+    "schedule_time_invalid": {
+      "message": "\"{value}\" is not a valid time (HH:MM, 00:01-23:59)."
+    },
+    "schedule_time_order": {
+      "message": "The time {value} must be after the previous one (ascending, after 00:00)."
+    },
+    "schedule_too_many": {
+      "message": "The week schedule needs {count} switch points, the thermostat stores at most {max}."
+    },
+    "schedule_incomplete": {
+      "message": "The week schedule of the device is not known yet. Read it from the device first or enter all seven days."
+    },
+    "schedule_read_failed": {
+      "message": "The time program of {name} could not be read."
+    },
+    "property_error": {
+      "message": "{name} refused the request (answer {frame})."
     }
   },
   "selector": {
@@ -67,6 +97,45 @@
       },
       "setpoint": {
         "name": "Target temperature"
+      }
+    },
+    "text": {
+      "schedule_1_monday": {
+        "name": "1 Monday"
+      },
+      "schedule_2_tuesday": {
+        "name": "2 Tuesday"
+      },
+      "schedule_3_wednesday": {
+        "name": "3 Wednesday"
+      },
+      "schedule_4_thursday": {
+        "name": "4 Thursday"
+      },
+      "schedule_5_friday": {
+        "name": "5 Friday"
+      },
+      "schedule_6_saturday": {
+        "name": "6 Saturday"
+      },
+      "schedule_7_sunday": {
+        "name": "7 Sunday"
+      }
+    },
+    "switch": {
+      "schedule_active": {
+        "name": "Week schedule active"
+      }
+    },
+    "button": {
+      "schedule_apply": {
+        "name": "Transfer week schedule"
+      },
+      "schedule_discard": {
+        "name": "Discard week schedule draft"
+      },
+      "schedule_read": {
+        "name": "Read week schedule from device"
       }
     }
   }

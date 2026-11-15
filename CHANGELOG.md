@@ -8,6 +8,14 @@
   type "Room thermostat" when adding the device. The target temperature is
   confirmed by logs, the measured temperature is very likely, see
   `GIRA_SYSTEM_3000_BLUETOOTH.md`.
+- Week schedule of the room thermostat, in the text format of the MAX! integration
+  (`5,06:00,21,18:00,5`): a text entity per weekday, buttons to transfer, discard
+  and read the schedule, and a switch "Wochenplan aktiv". The schedule is written
+  to the time program of the thermostat ("Erweitert" mode, up to 40 switch
+  points) and the clock of the thermostat is set when it is transferred.
+
+### Changed
+- The integration is named "System 3000".
 
 ## Release 1.2.0
 

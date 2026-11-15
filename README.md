@@ -3,7 +3,7 @@
 This is a custom component for Home Assistant to integrate the Gira System 3000 devices via
 espHome bluetooth proxy or other bluetooth adapters.
 
-Currently the shutter controller "Jal+Schaltuhr" is implemented and tested. The room thermostat is supported read only (measured and target temperature from the Bluetooth broadcasts, experimental): choose the device type "Room thermostat" when adding it by MAC address.
+Currently the shutter controller "Jal+Schaltuhr" is implemented and tested. The room thermostat is supported experimentally (measured and target temperature from the Bluetooth broadcasts, setting the target temperature, and the week schedule, see below): choose the device type "Room thermostat" when adding it by MAC address.
 
 > [!NOTE]
 > Code was generated with Gemini 2.5 Flash support.
@@ -15,7 +15,7 @@ Currently the shutter controller "Jal+Schaltuhr" is implemented and tested. The 
 1. **Prerequisite:** Ensure that HACS is installed and configured ([HACS Documentation](https://hacs.xyz)).
 2. **Add Repository:** Add `https://github.com/stho/girea-system-3000` as a custom repository in
    HACS (category: Integration).
-3. **Download:** Search for and install the **"Girea System 3000"** integration.
+3. **Download:** Search for and install the **"System 3000"** integration.
 4. **Restart:** Restart Home Assistant to apply the changes.
 
 ### Option 2: Manual Installation
@@ -68,6 +68,37 @@ Use this if the device is not discovered automatically.
 
 When a command from Home Assistant cannot be delivered later on (for example because the Bluetooth
 proxy is offline), the action fails after about 20 seconds with an error message.
+
+## Week schedule (room thermostat)
+
+The time program of the thermostat can be edited in Home Assistant, in the same text format as the
+MAX! integration [MAX-via-Cul](https://github.com/thnow/MAX-via-Cul). The schedule is stored in the
+thermostat itself, so it keeps working without Home Assistant.
+
+Entities of the thermostat device (category "Configuration"):
+
+| Entity | Purpose |
+| :--- | :--- |
+| `1 Montag` … `7 Sonntag` (text) | Schedule of one weekday, e.g. `5,06:00,21,18:00,5` |
+| `Wochenplan übertragen` (button) | Writes the whole week to the thermostat |
+| `Wochenplan-Entwurf verwerfen` (button) | Drops the changes that were not transferred |
+| `Wochenplan vom Gerät lesen` (button) | Reads the schedule from the thermostat (e.g. after a change in the Gira app) |
+| `Wochenplan aktiv` (switch, default on) | Switches all switch points of the thermostat on or off |
+
+**Format:** `Temperatur,HH:MM,Temperatur,HH:MM,…,Temperatur`. The first value applies from 00:00,
+each following pair is a switch time and the temperature from that time on, the last value applies
+until the end of the day. `5,06:00,21,18:00,5` means 5 °C until 06:00, 21 °C until 18:00 and 5 °C
+until midnight. Temperatures from 5 to 30 °C in steps of 0.5 (decimal point, not comma), times to
+the minute.
+
+Changing a day only creates a draft (attribute `draft_pending`); press **Wochenplan übertragen** to
+write it. Transferring switches the thermostat to the "Erweitert" mode of its time program and sets
+its clock.
+
+**Limits:** the thermostat stores at most 40 switch points per week. Every switch point belongs to
+one day. A switch point at 00:00 is only needed when a day starts with another temperature than the
+previous day ends with (otherwise the thermostat simply keeps that temperature over midnight). The
+attribute `switch_points_used` shows how many points the week needs.
 
 
 ## Known issues

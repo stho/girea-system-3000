@@ -4,7 +4,11 @@ from __future__ import annotations
 import logging
 import re
 
-from homeassistant.helpers.device_registry import format_mac
+from homeassistant.helpers.device_registry import (
+    CONNECTION_BLUETOOTH,
+    DeviceInfo,
+    format_mac,
+)
 
 DOMAIN = "girea_system_3000"
 
@@ -43,3 +47,14 @@ def get_device_id(address: str) -> str:
     stay independent of the config entry ID and of how the user typed the MAC.
     """
     return format_mac(address)
+
+
+def thermostat_device_info(address: str, name: str) -> DeviceInfo:
+    """Device of a room thermostat, shared by all its entities."""
+    return DeviceInfo(
+        identifiers={(DOMAIN, get_device_id(address))},
+        connections={(CONNECTION_BLUETOOTH, address.upper())},
+        name=name,
+        manufacturer=MANUFACTURER,
+        model=MODEL_THERMOSTAT,
+    )

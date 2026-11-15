@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## Release 1.3.0
 
 ### Added
 - Gira room thermostat (read only): measured and target temperature as sensors,

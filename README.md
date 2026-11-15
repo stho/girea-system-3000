@@ -100,6 +100,35 @@ one day. A switch point at 00:00 is only needed when a day starts with another t
 previous day ends with (otherwise the thermostat simply keeps that temperature over midnight). The
 attribute `switch_points_used` shows how many points the week needs.
 
+### Week schedule card
+
+The integration brings a dashboard card **"Gira Wochenprofil"** in the look of the MAX! week profile
+card. It is loaded automatically, there is no need to add a resource. Edit a dashboard, choose
+**Add card** and search for "Gira Wochenprofil", or add it in YAML:
+
+```yaml
+type: custom:gira-week-profile-card
+entity: climate.thermostat_kuche
+```
+
+The card shows one bar per weekday with the temperature of each period and marks the current day.
+Tap a day to edit its periods; the change can be copied to Mo–Fr, Sa–So or all days. Changes are a
+draft until you press transfer in the card, just like the text entities above. The card also has
+buttons to discard the draft and to read the schedule from the thermostat, and it switches
+"Wochenplan aktiv".
+
+| Option | Default | Purpose |
+| :--- | :--- | :--- |
+| `entity` | (required) | Climate entity of the thermostat |
+| `title` | `Wochenprofil` | Title of the card |
+| `show_current_temp` | `true` | Show the measured temperature |
+| `editable` | `true` | Allow editing in the card |
+| `days`, `active`, `apply`, `discard`, `read` | derived from `entity` | Entity IDs, only needed if you renamed the entities (`days` is a list of the 7 text entities, Monday first) |
+
+The card finds the other entities from the name of the climate entity, e.g.
+`text.thermostat_kuche_1_montag` and `switch.thermostat_kuche_wochenplan_aktiv`. The card is in
+German only.
+
 
 ## Known issues
 

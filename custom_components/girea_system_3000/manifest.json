@@ -18,7 +18,9 @@
   ],
   "config_flow": true,
   "dependencies": [
-    "bluetooth_adapters"
+    "bluetooth_adapters",
+    "frontend",
+    "http"
   ],
   "documentation": "https://github.com/stho/girea-system-3000",
   "integration_type": "device",

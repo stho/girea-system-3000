@@ -13,6 +13,9 @@
   and read the schedule, and a switch "Wochenplan aktiv". The schedule is written
   to the time program of the thermostat ("Erweitert" mode, up to 40 switch
   points) and the clock of the thermostat is set when it is transferred.
+- Dashboard card "Gira Wochenprofil" (`custom:gira-week-profile-card`) to view and
+  edit the week schedule, in the look of the MAX! week profile card. The integration
+  loads it automatically, no dashboard resource is needed.
 
 ### Changed
 - The integration is named "System 3000".

@@ -13,6 +13,7 @@ from .const import (
     LOGGER,
     get_device_id,
 )
+from .frontend import async_register_frontend
 from .gira_ble import GiraBLEClient, GiraPassiveBluetoothDataUpdateCoordinator
 from .schedule_manager import ScheduleManager
 
@@ -86,6 +87,7 @@ async def _async_initial_schedule_read(schedule: ScheduleManager, name: str) -> 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Girea System 3000 from a config entry."""
+    await async_register_frontend(hass)
     address = entry.data["address"]
     device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_COVER)
     kind = "Thermostat" if device_type == DEVICE_TYPE_THERMOSTAT else "Shutter"

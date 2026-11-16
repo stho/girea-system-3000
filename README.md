@@ -17,7 +17,7 @@ Currently the shutter controller "Jal+Schaltuhr" is implemented and tested. The 
 1. **Prerequisite:** Ensure that HACS is installed and configured ([HACS Documentation](https://hacs.xyz)).
 2. **Add Repository:** Add `https://github.com/stho/girea-system-3000` as a custom repository in
    HACS (category: Integration).
-3. **Download:** Search for and install the **"System 3000"** integration.
+3. **Download:** Search for and install the **"Girea System 3000"** integration.
 4. **Restart:** Restart Home Assistant to apply the changes.
 
 ### Option 2: Manual Installation

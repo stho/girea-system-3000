@@ -1,4 +1,4 @@
-"""Frontend card of the System 3000 integration (week schedule card)."""
+"""Frontend card of the Girea System 3000 integration (week schedule card)."""
 from __future__ import annotations
 
 import logging

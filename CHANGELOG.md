@@ -17,9 +17,6 @@
   edit the week schedule, in the look of the MAX! week profile card. The integration
   loads it automatically, no dashboard resource is needed.
 
-### Changed
-- The integration is named "System 3000".
-
 ## Release 1.2.0
 
 ### Added

@@ -1,5 +1,22 @@
 # Changelog
 
+## Release 1.3.0
+
+### Added
+- Gira room thermostat (read only): measured and target temperature as sensors,
+  taken from the Bluetooth broadcasts (no connection needed). Choose the device
+  type "Room thermostat" when adding the device. The target temperature is
+  confirmed by logs, the measured temperature is very likely, see
+  `GIRA_SYSTEM_3000_BLUETOOTH.md`.
+- Week schedule of the room thermostat, in the text format of the MAX! integration
+  (`5,06:00,21,18:00,5`): a text entity per weekday, buttons to transfer, discard
+  and read the schedule, and a switch "Wochenplan aktiv". The schedule is written
+  to the time program of the thermostat ("Erweitert" mode, up to 40 switch
+  points) and the clock of the thermostat is set when it is transferred.
+- Dashboard card "Gira Wochenprofil" (`custom:gira-week-profile-card`) to view and
+  edit the week schedule, in the look of the MAX! week profile card. The integration
+  loads it automatically, no dashboard resource is needed.
+
 ## Release 1.2.0
 
 ### Added

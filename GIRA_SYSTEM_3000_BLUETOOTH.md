@@ -102,3 +102,133 @@ While this documentation focuses on shutters (ObjectID 800), the protocol struct
 
 ### Implementation Recommendation
 To improve the integration, the `GiraPassiveBluetoothDataUpdateCoordinator` should be updated to listen for PIDs `0xF5` (Slat position).
+
+---
+
+## 6. Room Thermostat
+
+Analysed from the broadcasts and from notification logs (nRF Connect) taken while
+the target temperature was changed on the device and in the Gira app.
+
+### GATT
+| Item | UUID | Properties |
+| :--- | :--- | :--- |
+| Service | `9769f147-f77a-43ae-8c35-09f0c5245308` | primary |
+| Command characteristic | `97696341-f77a-43ae-8c35-09f0c5245308` | Write (same as the shutter) |
+| Status characteristic | `9769c769-f77a-43ae-8c35-09f0c5245308` | Notify, Read (CCCD `0x2902`) |
+
+The device must be bonded (pairing mode) before a client can connect. In pairing
+mode it advertises the local name `Thermostat`, flags `05` and manufacturer data
+`05 91 4a 09 01 15`.
+
+### Message format = KNX cEMI
+The frames are KNX cEMI interface object server frames, not a Gira specific
+format:
+
+`[MessageCode] [ObjectType 2 bytes] [Instance 1 byte] [PropertyID] [NoE/Start 2 bytes = 0x10 0x01] [Data]`
+
+`10 01` is "1 element, start index 1" (the number of elements is 4 bits, the
+start index 12 bits), **not** "start index" and "value length" as in section 1.
+The length of the data depends on the property (1 byte for binary/enum values,
+2 bytes for temperatures), it is not part of the frame.
+
+| Code | cEMI name | Seen |
+| :--- | :--- | :--- |
+| `F6` | M_PropWrite.req | commands to the shutter (see above) |
+| `F5` | M_PropWrite.con | notification after the app wrote a property (no data) |
+| `F7` | M_PropInfo.ind | broadcasts and spontaneous notifications |
+| `FB` | M_PropRead.con | answers to the reads of the app after connecting |
+
+Temperatures are KNX DPT 9 (16 bit float: `S EEEE MMM MMMMMMMM`, value =
+`0.01 * M * 2^E`), e.g. `0C1A` = 21.0 °C, `07D0` = 20.0 °C, `0CE2` = 25.0 °C.
+
+### Properties
+| ObjectType | PID | Type | Meaning | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| `0x0141` | `0xFE` | DPT 9 | measured temperature (e.g. `07F2` = 20.34 °C), changes slowly | very likely |
+| `0x0065` | `0xFF` | DPT 9 | target temperature | confirmed |
+| `0x0065` | `0xF5` | DPT 9 | target temperature, always sent together with `0xFF` | confirmed |
+| `0x0065` | `0xF4` | byte | `01` after the target was changed on the device | unknown meaning |
+| `0x0065` | `0xA1` / `0xA0` / `0xA2` | DPT 9 | 7.0 / 18.0 / 24.0 °C (limits or presets) | unknown meaning |
+| `0x0065` | `0x9F` / `0xA3` | DPT 9 | 21.0 °C | unknown meaning |
+| `0x0000` | `0x0B` | 6 bytes | device ID `00 0A 4A 09 01 15`; the last four bytes are the first bytes of the broadcast manufacturer data | |
+| `0x0000` | `0x02` | text | name ("Thermostat Kü…", read in several blocks) | |
+
+The target temperature changes in steps of 0.5 °C. Changing it on the device
+(20.0 -> 20.5 -> 21.0) and in the app (22.0 -> 25.0) both produce a pair of `F7`
+notifications for `0xF5` and `0xFF` with the new value.
+
+### Setting the target temperature
+Confirmed with Android Bluetooth HCI snoop logs of the Gira app (2026-11-15):
+
+| Command | Meaning |
+| :--- | :--- |
+| `F6 00 65 01 F5 10 01 [DPT 9]` | set the target temperature |
+| `F6 00 65 01 F6 10 01 00` / `01` | target temperature 0.5 °C down / up |
+
+After a step the device answers `F5 00 65 01 F6 10 01` and reports the new target
+with `F7` notifications for `0xF5` and `0xFF` (16.0 -> 15.5 -> 15.0 in the log).
+
+### Requests and answers
+Reads are `FC` (M_PropRead.req) with the same header as the write. The device
+answers every request on the status characteristic with the code minus one and
+the same header: `FB [header] [data]` for a read, `F5 [header]` without data for
+a write. An answer with 0 elements (`... 00 nn`) means the request was refused.
+`10 nn` addresses element `nn`; element 0 of an array property is its length.
+
+### Clock
+The app sets the clock of the thermostat each time it connects:
+
+`F6 03 E9 01 FF 10 01 [KNX DPT 19, 8 bytes]`
+
+e.g. `7E 0B 0F E9 2D 22 00 00` = 2026-11-15 (year - 1900, month, day), byte 4 =
+day of week (bits 7..5, 1 = Monday ... 7 = Sunday) and hour (bits 4..0), then
+minute, second and two flag bytes (both 0 in the app).
+
+### Time program
+The thermostat switches its target temperature by itself, following a list of
+switch points. The Gira app offers two modes:
+
+| Command | Mode |
+| :--- | :--- |
+| `F6 01 86 01 A5 10 01 00` | Standard: 3 timers, each with a block for Mo-Fr and one for Sa+So, 2 switch points per block (comfort / standby), 12 entries |
+| `F6 01 86 01 A5 10 01 01` | Erweitert: up to 40 free switch points, any days, any temperature |
+
+Switching the mode resets the list to the 12 standard entries.
+
+The list is ObjectType `0x03F4`, PID `0x9C`:
+
+| Request | Meaning |
+| :--- | :--- |
+| `FC 03 F4 01 9C 10 00` | read the number of entries (UInt16, e.g. `00 0C`) |
+| `FC 03 F4 01 9C 10 nn` | read entry `nn` (1 ... count) |
+| `F6 03 F4 01 9C 10 00 00 00` | delete all entries (count = 0) |
+| `F6 03 F4 01 9C 10 nn [10 bytes]` | write entry `nn`; `nn` = count + 1 appends one |
+
+There is no command to delete one entry: the app sets the count to 0 and writes
+the remaining entries again. Changing an entry overwrites it.
+
+Entry (10 bytes): `HH MM DD 20 01 00 00 01 TT TT`
+
+| Byte | Meaning |
+| :--- | :--- |
+| `HH`, `MM` | start time (any minute, e.g. 06:07) |
+| `DD` | bit 7 = switch point active, bits 0..6 = Monday ... Sunday (`1F` Mo-Fr, `60` Sa+So, `FF` active Mo-So, `84` active Wednesday) |
+| `20 01 00 00 01` | always the same, meaning unknown |
+| `TT TT` | temperature from that time on, DPT 9 (5 °C was accepted) |
+
+Between midnight and the first switch point of a day the last temperature of
+the previous day stays active.
+
+In the standard mode the 12 entries are timer 1 Mo-Fr (1, 2), timer 1 Sa+So
+(3, 4), timer 2 (5-8) and timer 3 (9-12); the timers are switched with
+`03F4` PID `0x9B` elements 1-3 (`01` on, `00` off).
+
+When the app leaves the time program it writes
+`F6 C3 5A 01 05 10 01 02 00 00 00 00 00 00 00 00 00` (meaning unknown, the
+integration sends it the same way after writing the list).
+
+Other values read by the app (meaning not confirmed): in the Erweitert mode
+`0065` PID `0xA0` changed from 18.0 to 10.0 °C and `0xA1` from 7.0 to 5.0 °C
+(standby and frost protection?); `0065` PID `0xFB` (2 bytes) is reported after
+changes.
